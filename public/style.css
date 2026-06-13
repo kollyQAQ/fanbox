@@ -931,6 +931,11 @@ kbd {
 /* 文件跟随正盯着的终端 tab：描边高亮 + 眼睛标记 */
 .term-tab.following { box-shadow: inset 0 0 0 1px var(--accent); }
 .term-tab .tab-eye { display: inline-flex; align-items: center; color: var(--accent); margin: 0 1px; }
+/* ⌘ 按住时 tab 上浮现序号（盖住关闭按钮位置） */
+.term-tab::after { content: attr(data-idx); position: absolute; right: 4px; top: 50%; transform: translateY(-50%); min-width: 12px; height: 12px; line-height: 12px; font-size: 9px; font-weight: 700; text-align: center; border-radius: 6px; background: var(--accent); color: var(--accent-ink, #fff); opacity: 0; pointer-events: none; transition: opacity .12s; }
+.term-tab { position: relative; }
+#term-tabs.show-idx .term-tab::after { opacity: 1; }
+#term-tabs.show-idx .term-tab .tab-x { opacity: 0; }
 /* 产物卡片：agent 编译/打包出的成品 */
 .artifact-card .art-name { font-size: 15px; font-weight: 600; color: var(--text); word-break: break-all; margin-bottom: 4px; }
 .artifact-card .art-sub { font-size: 12px; color: var(--text-faint); margin-bottom: 16px; }

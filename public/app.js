@@ -2204,6 +2204,8 @@ function bindEvents() {
   $('#cmdk').onclick = (e) => { if (e.target.id === 'cmdk') cmdk.close(); };
 
   document.addEventListener('keydown', (e) => {
+    // 按住 ⌘/Ctrl 时终端 tab 显示序号提示
+    if ((e.key === 'Meta' || e.key === 'Control') && typeof term !== 'undefined') $('#term-tabs')?.classList.add('show-idx');
     if (e.key === 'Escape' && $('#context-menu')) { closeContextMenu(); return; }
     const cmdkOpen = !$('#cmdk').classList.contains('hidden');
     const lbOpen = !!document.querySelector('.lightbox');
@@ -2225,9 +2227,31 @@ function bindEvents() {
     if (e.key === 'Escape' && inInput) { document.activeElement.blur(); return; }
     if (e.key === 'Escape' && !$('#preview').classList.contains('hidden')) { closePreview(); return; }
     if ((e.metaKey || e.ctrlKey) && e.key === '[') { e.preventDefault(); goBack(); return; }
-    if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !inInput) { e.preventDefault(); toggleSidebar(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); toggleSidebar(); return; }
+    // ⌘B 打开/关闭浏览器模块（browser.js 提供 toggleBrowser）
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !e.shiftKey) { e.preventDefault(); if (typeof toggleBrowser === 'function') toggleBrowser(); return; }
+    // ⌘N 新建终端标签
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'n' || e.key === 'N') && !e.shiftKey) { e.preventDefault(); if (typeof term !== 'undefined') { if ($('#terminal-panel').classList.contains('hidden')) term.open(); else term.newTab(); } return; }
+    // ⌘P 切换隐藏文件显示
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'p' || e.key === 'P') && !e.shiftKey) { e.preventDefault(); state.showHidden = !state.showHidden; localStorage.setItem('fb_hidden', state.showHidden ? '1' : '0'); const cb = $('#toggle-hidden'); if (cb) cb.checked = state.showHidden; renderFiles(); return; }
     // ⌘⇧F 铺满要在 inInput 拦截之前：终端焦点落在 xterm 的 textarea 上，正是主要使用场景
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); toggleFocusedMax(); return; }
+    // ⌘1-9 切换终端标签（焦点无关,全局生效）
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key >= '1' && e.key <= '9') {
+      const idx = Number(e.key) - 1;
+      if (typeof term !== 'undefined' && term.sessions[idx]) { e.preventDefault(); if ($('#terminal-panel').classList.contains('hidden')) term.open(); term.activate(term.sessions[idx].id); return; }
+    }
+    // ⌘←/→ 切换前/后终端标签（焦点在终端区域时）
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && typeof term !== 'undefined' && term.sessions.length > 1 && $('#terminal-panel').contains(document.activeElement)) {
+      e.preventDefault();
+      const ci = term.sessions.findIndex((x) => x.id === term.active);
+      const ni = e.key === 'ArrowLeft' ? (ci - 1 + term.sessions.length) % term.sessions.length : (ci + 1) % term.sessions.length;
+      term.activate(term.sessions[ni].id); return;
+    }
+    // ⌘W 关闭当前终端标签（焦点在终端区域时）
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'w' || e.key === 'W') && typeof term !== 'undefined' && term.active && $('#terminal-panel').contains(document.activeElement)) {
+      e.preventDefault(); term.closeTab(term.active); return;
+    }
     if (inInput) return;
     // 主区键盘导航
     if (e.key === 'ArrowDown') { e.preventDefault(); moveCursor(state.cols); }
@@ -2240,6 +2264,10 @@ function bindEvents() {
     else if (e.key === ' ') { e.preventDefault(); const it = state.visible[state.cursor]; if (it) toggleFav(it); }
     else if (e.key === 'F2') { e.preventDefault(); const it = state.visible[state.cursor]; if (it) doRename(it); }
   });
+  document.addEventListener('keyup', (e) => {
+    if (e.key === 'Meta' || e.key === 'Control') $('#term-tabs')?.classList.remove('show-idx');
+  });
+  window.addEventListener('blur', () => $('#term-tabs')?.classList.remove('show-idx'));
 }
 function updateGridSizeVisibility() {
   $('#gridsize-seg').style.display = state.view === 'grid' ? '' : 'none';
@@ -2820,11 +2848,12 @@ const term = {
   renderTabs() {
     const bar = $('#term-tabs');
     bar.innerHTML = '';
-    this.sessions.forEach((s) => {
+    this.sessions.forEach((s, idx) => {
       const t = document.createElement('div');
       const dotState = s.dead ? 'dead' : (s.status === 'busy' ? 'busy' : 'idle');
       const followed = follow.on && follow.sid === s.id; // 文件跟随正盯着这个 tab
       t.className = 'term-tab' + (s.id === this.active ? ' active' : '') + (s.unread ? ' unread' : '') + (followed ? ' following' : '');
+      t.dataset.idx = String(idx + 1);
       const dotTitle = s.dead ? '进程已退出' : (s.status === 'busy' ? 'agent 运行中' : '空闲');
       // 终端图标按项目路径染色：同项目同色，和面包屑的配对色点呼应
       const hue = this.hueOf(s.cwd || s.startDir);
