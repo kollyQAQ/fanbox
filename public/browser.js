@@ -267,6 +267,7 @@
     sites = next;
     save();
     if (active && !sites.some((s) => s.id === active)) active = sites.length ? sites[0].id : null;
+    if (on && !active && sites.length) active = sites[0].id; // 空状态下首次添加：自动选中第一个（与 show() 一致）
     if (on && active) activate(active);
     else renderAll();
   }
