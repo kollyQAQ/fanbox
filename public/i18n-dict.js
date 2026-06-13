@@ -190,12 +190,21 @@ window.FANBOX_DICT = {
 
   // ---------- 项目记忆面板 ----------
   '翻会话日志中…': 'Digging through session logs…',
+  '项目记忆 · 全部 Agent 项目': 'Project memory · All agent projects',
+  '扫描项目中…': 'Scanning projects…',
+  '选左侧一个项目查看它的会话': 'Pick a project on the left to see its sessions',
   '这个文件夹还没有 agent 会话记录': 'No agent sessions in this folder yet',
   '在这里跑过 Claude Code / Codex 之后，历史会话会出现在这里': 'Run Claude Code / Codex here and past sessions will appear',
   '（无标题会话）': '(untitled session)',
   '在内嵌终端里接上这段会话的上下文继续': "Resume this session's context in the embedded terminal",
   '▶ 续上': '▶ Resume',
   '已在终端续上会话': 'Session resumed in terminal',
+  '改标题（Claude Code 里也会同步显示）': 'Rename (also shows up in Claude Code)',
+  '标题已更新': 'Title updated',
+  '改标题失败': 'Failed to rename',
+  '标题不能为空': 'Title cannot be empty',
+  '无效会话 id': 'Invalid session id',
+  '找不到这个会话的日志文件': "Can't find this session's log file",
 
   // ---------- AI 整理（终端交互式）----------
   '没找到 claude / codex 命令——AI 整理需要装其中一个 CLI': 'claude / codex command not found — AI organize needs one of these CLIs installed',

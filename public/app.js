@@ -1473,6 +1473,81 @@ const shotTray = {
   dismiss() { clearTimeout(this.timer); if (this.el) { this.el.remove(); this.el = null; } },
 };
 
+// 会话列表渲染 + 事件绑定（✎改名 / ▶续上 / 点文件直达）——memoryPanel 和 allMemoryPanel 共用。
+// close：续上/点文件前关闭所在面板的回调；dirPath：这批会话所属目录
+function renderSessionList(container, dirPath, sessions, close) {
+  if (!sessions || !sessions.length) {
+    container.innerHTML = '<div class="empty-state">这个文件夹还没有 agent 会话记录<br><br><span class="usage-sub">在这里跑过 Claude Code / Codex 之后，历史会话会出现在这里</span></div>';
+    return;
+  }
+  container.innerHTML = sessions.map((s, i) => `
+    <div class="mem-sess">
+      <div class="mem-head" data-i="${i}">
+        <span class="mem-agent${s.agent === 'codex' ? ' codex' : ''}">${s.agent === 'codex' ? '>_' : 'C'}</span>
+        <span class="mem-title">${escapeHtml(s.title || '（无标题会话）')}</span>
+        ${s.agent === 'claude' ? `<button class="ghost-btn mem-edit" data-i="${i}" title="改标题（Claude Code 里也会同步显示）">✎</button>` : ''}
+        <button class="ghost-btn mem-resume" data-i="${i}" title="在内嵌终端里接上这段会话的上下文继续">▶ 续上</button>
+      </div>
+      <div class="mem-meta">${fmtTime(s.lastT)} · ${s.userMsgs} 条消息${s.files.length ? ` · 改了 ${s.files.length} 个文件` : ''}${s.skills.length ? ' · ' + s.skills.map((k) => `<i class="mem-skill">${escapeHtml(k)}</i>`).join(' ') : ''}</div>
+      ${s.files.length ? `<div class="mem-files hidden">${s.files.map((f) => `<div class="mem-file" data-p="${escapeHtml(f)}" title="${escapeHtml(f)}">${escapeHtml(f.startsWith(dirPath + '/') ? f.slice(dirPath.length + 1) : f.replace(state.home, '~'))}</div>`).join('')}</div>` : ''}
+    </div>`).join('');
+  container.querySelectorAll('.mem-head').forEach((h) => {
+    h.onclick = (ev) => {
+      if (ev.target.closest('.mem-resume') || ev.target.closest('.mem-edit') || ev.target.closest('.mem-title-input')) return;
+      const files = h.parentElement.querySelector('.mem-files');
+      if (files) files.classList.toggle('hidden');
+    };
+  });
+  // 改标题：标题原地变输入框，Enter 保存（append custom-title 行）、Esc/失焦取消
+  container.querySelectorAll('.mem-edit').forEach((b) => {
+    b.onclick = () => {
+      const s = sessions[Number(b.dataset.i)];
+      const titleEl = b.parentElement.querySelector('.mem-title');
+      const input = document.createElement('input');
+      input.className = 'mem-title-input';
+      input.value = s.title || '';
+      titleEl.replaceWith(input);
+      input.focus(); input.select();
+      let done = false, saving = false;
+      const restore = (text) => {
+        if (done) return; done = true;
+        const span = document.createElement('span');
+        span.className = 'mem-title';
+        span.textContent = text || '（无标题会话）';
+        input.replaceWith(span);
+      };
+      input.onblur = () => { if (!saving) restore(s.title); };
+      input.onkeydown = async (ke) => {
+        if (ke.key === 'Escape') { restore(s.title); return; }
+        if (ke.key !== 'Enter') return;
+        const v = input.value.trim();
+        if (!v || v === s.title) { restore(s.title); return; }
+        saving = true;
+        const r = await apiPost('/api/session-title', { path: dirPath, id: s.id, title: v });
+        if (r.ok) { s.title = r.title; restore(s.title); toast('标题已更新'); }
+        else { saving = false; restore(s.title); toast(r.error || '改标题失败', true); }
+      };
+    };
+  });
+  container.querySelectorAll('.mem-resume').forEach((b) => {
+    b.onclick = () => {
+      const s = sessions[Number(b.dataset.i)];
+      const cmd = s.agent === 'codex' ? `codex resume ${s.id}` : `claude --dangerously-skip-permissions --resume ${s.id}`;
+      if (close) close();
+      term.runInDir(dirPath, cmd, '已在终端续上会话');
+    };
+  });
+  container.querySelectorAll('.mem-file').forEach((f) => {
+    f.onclick = async () => {
+      const p = f.dataset.p;
+      if (close) close();
+      await navigate(dirOf(p));
+      const e = state.entries.find((x) => x.path === p);
+      if (e) { state.selected = p; openPreview(e); renderFiles(); }
+    };
+  });
+}
+
 // 项目记忆：这个文件夹里 AI 干过什么——历史会话考古，可展开改过的文件，可一键续上
 async function memoryPanel(dirPath) {
   const old = $('.mem-overlay'); if (old) old.remove();
@@ -1482,50 +1557,57 @@ async function memoryPanel(dirPath) {
     <div class="input-title">项目记忆 · ${escapeHtml(dirPath.replace(state.home, '~'))}</div>
     <div class="mem-body"><div class="cmdk-loading">翻会话日志中…</div></div></div>`;
   document.body.appendChild(ov);
-  const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
+  // Esc 在标题编辑框里只取消编辑（input 自己处理），不关弹窗
+  const onKey = (ev) => { if (ev.key === 'Escape' && !(ev.target.closest && ev.target.closest('.mem-title-input'))) { ev.preventDefault(); close(); } };
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
   ov.onclick = (ev) => { if (ev.target === ov) close(); };
   document.addEventListener('keydown', onKey, true);
   const d = await api('/api/project-memory?path=' + encodeURIComponent(dirPath));
-  const body = ov.querySelector('.mem-body');
-  if (!d.ok || !d.sessions.length) {
-    body.innerHTML = '<div class="empty-state">这个文件夹还没有 agent 会话记录<br><br><span class="usage-sub">在这里跑过 Claude Code / Codex 之后，历史会话会出现在这里</span></div>';
+  renderSessionList(ov.querySelector('.mem-body'), dirPath, d.ok ? d.sessions : [], close);
+}
+
+// 全局项目记忆：左栏全部 agent 项目（顺序同侧栏 / 按最近活跃排），选一个右栏展示该目录会话
+async function allMemoryPanel() {
+  const old = $('.mem-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.className = 'input-overlay mem-overlay';
+  ov.innerHTML = `<div class="input-dialog allmem-dialog">
+    <div class="input-title">项目记忆 · 全部 Agent 项目</div>
+    <div class="allmem-body">
+      <div class="allmem-projs"><div class="cmdk-loading">扫描项目中…</div></div>
+      <div class="allmem-sessions mem-body"><div class="empty-state usage-sub">选左侧一个项目查看它的会话</div></div>
+    </div></div>`;
+  document.body.appendChild(ov);
+  const onKey = (ev) => { if (ev.key === 'Escape' && !(ev.target.closest && ev.target.closest('.mem-title-input'))) { ev.preventDefault(); close(); } };
+  const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+  ov.onclick = (ev) => { if (ev.target === ov) close(); };
+  document.addEventListener('keydown', onKey, true);
+
+  const projsEl = ov.querySelector('.allmem-projs');
+  const sessEl = ov.querySelector('.allmem-sessions');
+  const data = await api('/api/agent-projects').catch(() => null);
+  const projects = (data && data.projects) || [];
+  if (!projects.length) {
+    projsEl.innerHTML = '<div class="empty-state usage-sub">用 Claude Code / Codex 跑过的项目会出现在这里</div>';
+    sessEl.innerHTML = '';
     return;
   }
-  body.innerHTML = d.sessions.map((s, i) => `
-    <div class="mem-sess">
-      <div class="mem-head" data-i="${i}">
-        <span class="mem-agent${s.agent === 'codex' ? ' codex' : ''}">${s.agent === 'codex' ? '>_' : 'C'}</span>
-        <span class="mem-title">${escapeHtml(s.title || '（无标题会话）')}</span>
-        <button class="ghost-btn mem-resume" data-i="${i}" title="在内嵌终端里接上这段会话的上下文继续">▶ 续上</button>
-      </div>
-      <div class="mem-meta">${fmtTime(s.lastT)} · ${s.userMsgs} 条消息${s.files.length ? ` · 改了 ${s.files.length} 个文件` : ''}${s.skills.length ? ' · ' + s.skills.map((k) => `<i class="mem-skill">${escapeHtml(k)}</i>`).join(' ') : ''}</div>
-      ${s.files.length ? `<div class="mem-files hidden">${s.files.map((f) => `<div class="mem-file" data-p="${escapeHtml(f)}" title="${escapeHtml(f)}">${escapeHtml(f.startsWith(dirPath + '/') ? f.slice(dirPath.length + 1) : f.replace(state.home, '~'))}</div>`).join('')}</div>` : ''}
+  const selectProj = async (i) => {
+    projsEl.querySelectorAll('.allmem-proj').forEach((el, j) => el.classList.toggle('on', j === i));
+    sessEl.innerHTML = '<div class="cmdk-loading">翻会话日志中…</div>';
+    const dirPath = projects[i].path;
+    const d = await api('/api/project-memory?path=' + encodeURIComponent(dirPath)).catch(() => null);
+    renderSessionList(sessEl, dirPath, d && d.ok ? d.sessions : [], close);
+  };
+  projsEl.innerHTML = projects.map((pj, i) => `
+    <div class="allmem-proj" data-i="${i}" title="${escapeHtml(pj.path)}">
+      <span class="allmem-proj-name">${escapeHtml(pj.name)}</span>
+      <span class="allmem-proj-meta">${pj.agents.map((a) => `<i class="agent-dot ${a}" title="${a}"></i>`).join('')}${agoShort(pj.lastActive)}</span>
     </div>`).join('');
-  body.querySelectorAll('.mem-head').forEach((h) => {
-    h.onclick = (ev) => {
-      if (ev.target.closest('.mem-resume')) return;
-      const files = h.parentElement.querySelector('.mem-files');
-      if (files) files.classList.toggle('hidden');
-    };
+  projsEl.querySelectorAll('.allmem-proj').forEach((el) => {
+    el.onclick = () => selectProj(Number(el.dataset.i));
   });
-  body.querySelectorAll('.mem-resume').forEach((b) => {
-    b.onclick = () => {
-      const s = d.sessions[Number(b.dataset.i)];
-      const cmd = s.agent === 'codex' ? `codex resume ${s.id}` : `claude --dangerously-skip-permissions --resume ${s.id}`;
-      close();
-      term.runInDir(dirPath, cmd, '已在终端续上会话');
-    };
-  });
-  body.querySelectorAll('.mem-file').forEach((f) => {
-    f.onclick = async () => {
-      const p = f.dataset.p;
-      close();
-      await navigate(dirOf(p));
-      const e = state.entries.find((x) => x.path === p);
-      if (e) { state.selected = p; openPreview(e); renderFiles(); }
-    };
-  });
+  selectProj(0); // 默认选第一个（最近活跃的）
 }
 
 // AI 整理：一键在内嵌终端拉起交互式 agent（claude/codex）对话式整理。
@@ -2012,6 +2094,7 @@ function bindEvents() {
   usagePanel.bind();
   shotTray.init();
   $('#skills-entry').onclick = () => skillsView.show();
+  $('#allmem-entry').onclick = (ev) => { ev.stopPropagation(); allMemoryPanel(); };
   $('#term-newtab').onclick = () => term.newTab();
   $('#term-max').onclick = () => term.toggleMax();
   $('#term-dock').onclick = () => term.setDock(term.dock === 'bottom' ? 'right' : 'bottom');
