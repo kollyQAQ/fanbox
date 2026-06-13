@@ -57,3 +57,7 @@ contextBridge.exposeInMainWorld('fanboxEnv', {
   isDesktopApp: true,
   platform: process.platform,
 });
+
+contextBridge.exposeInMainWorld('fanboxShortcut', {
+  onReload: (cb) => { const h = () => cb(); ipcRenderer.on('shortcut:reload', h); return () => ipcRenderer.removeListener('shortcut:reload', h); },
+});
