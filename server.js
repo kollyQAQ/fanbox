@@ -60,9 +60,12 @@ const MIME = {
 // ---------- 工具函数 ----------
 
 function ext(name) {
-  const i = name.lastIndexOf('.');
-  if (i <= 0) return '';
-  return name.slice(i + 1).toLowerCase();
+  // 取 basename 再找点：点开头的隐藏文件（.gitignore/.env）把点后部分当扩展名，
+  // 与 TEXT_EXT 里已有的 'gitignore'/'env' 对上；否则传完整路径和传文件名结果不一致
+  const base = name.slice(name.lastIndexOf('/') + 1);
+  const i = base.lastIndexOf('.');
+  if (i < 0) return '';
+  return base.slice(i + 1).toLowerCase();
 }
 
 // 从一组文件/目录名推断项目类型（签名文件），供当前目录徽章 + 子目录浅探共用
@@ -408,7 +411,7 @@ async function recentFiles(rootPath) {
 
 async function writeTextFile(p, content, expectedMtime) {
   const file = resolvePath(p);
-  if (!TEXT_EXT.has(ext(file))) throw new Error('只支持文本类文件编辑');
+  if (kindOf(path.basename(file), false) !== 'text') throw new Error('只支持文本类文件编辑');
   if (typeof content !== 'string') throw new Error('内容非法');
   // 并发覆盖保护：打开编辑后文件被外部（agent）改过或删除，拒绝盲覆盖
   if (expectedMtime) {
@@ -995,7 +998,7 @@ async function gitStatus(dirPath) {
 // 单文件 HEAD 版本 vs 工作区当前内容，供 Monaco DiffEditor 并排渲染
 async function gitFileDiff(p) {
   const file = resolvePath(p);
-  if (!TEXT_EXT.has(ext(file))) return { isRepo: true, diffable: false };
+  if (kindOf(path.basename(file), false) !== 'text') return { isRepo: true, diffable: false };
   const root = await gitRoot(path.dirname(file));
   if (!root) return { isRepo: false };
   const rel = path.relative(root, file).split(path.sep).join('/');
