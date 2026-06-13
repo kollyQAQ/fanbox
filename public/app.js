@@ -3902,4 +3902,8 @@ function bindUpdateNotice() {
   // 主进程启动 6 秒就推送，init 加载大目录时这里可能还没注册监听——补拉一次，错过的推送不丢
   if (window.fanboxUpdate.get) window.fanboxUpdate.get().then((m) => { if (m) show(m); }).catch(() => {});
 }
+// ⌘R 通过主进程菜单 → IPC → renderer：浏览器开着就刷 webview，否则静默
+if (window.fanboxShortcut) {
+  window.fanboxShortcut.onReload(() => { if (window.fbBrowser && window.fbBrowser.active) window.fbBrowser.reload?.(); });
+}
 init();
