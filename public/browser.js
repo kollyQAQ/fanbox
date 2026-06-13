@@ -236,20 +236,10 @@
       bindRow(wrap.lastElementChild);
       wrap.lastElementChild.querySelector('.bw-in-url').focus();
     };
-    // 拖拽排序：dragover 实时挪行，松手按 DOM 顺序提交
-    const wrap = modal.querySelector('.bw-rows');
-    wrap.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      const dragging = wrap.querySelector('.bw-row.dragging');
-      if (!dragging) return;
-      const after = [...wrap.querySelectorAll('.bw-row:not(.dragging)')]
-        .find((r) => e.clientY < r.getBoundingClientRect().top + r.offsetHeight / 2);
-      if (after) wrap.insertBefore(dragging, after); else wrap.appendChild(dragging);
-    });
   }
   function rowHtml(s) {
     return `<div class="bw-row" data-id="${s.id}">
-      <span class="bw-drag" draggable="true" title="拖拽排序">⠿</span>
+      <span class="bw-drag" title="拖拽排序">⠿</span>
       <input class="bw-in-name" placeholder="名称（选填）" value="${escapeHtml(s.name || '')}">
       <input class="bw-in-url" placeholder="网址，如 zhihu.com" value="${escapeHtml(s.url || '')}">
       <button class="bw-row-del" title="删除">✕</button>
@@ -263,9 +253,28 @@
   function bindRow(row) {
     row.querySelector('.bw-row-del').onclick = () => { row.remove(); commit(); };
     row.querySelectorAll('input').forEach((inp) => inp.addEventListener('change', () => commit()));
+    // 拖拽排序：用 Pointer Events 手写，不走 HTML5 native draggable —— 后者在触控板上 drop 常判失败导致松手回弹。
+    // setPointerCapture 保证指针移出手柄/列表也不丢 move/up；pointermove 实时挪行，pointerup 按 DOM 序提交。
     const h = row.querySelector('.bw-drag');
-    h.addEventListener('dragstart', (e) => { row.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
-    h.addEventListener('dragend', () => { row.classList.remove('dragging'); commit(); });
+    h.addEventListener('pointerdown', (e) => {
+      if (e.button) return; // 仅主键/主指针
+      e.preventDefault();
+      const wrap = row.parentElement;
+      row.classList.add('dragging');
+      const onMove = (ev) => {
+        const after = [...wrap.querySelectorAll('.bw-row:not(.dragging)')]
+          .find((r) => ev.clientY < r.getBoundingClientRect().top + r.offsetHeight / 2);
+        if (after) wrap.insertBefore(row, after); else wrap.appendChild(row);
+      };
+      const onUp = () => {
+        row.classList.remove('dragging');
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        commit();
+      };
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
   }
   // 提交：按弹层 DOM 行序重建 sites（保留旧对象引用，webview 事件闭包不失效）。
   // 空 URL / 非法 URL 的行不入库（行在弹层里保留，关掉弹层即消失）。
