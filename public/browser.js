@@ -328,7 +328,8 @@
         if (wv && wv.__ready) try { wv.reload(); } catch { /* */ }
       }
     });
-    window.fbBrowser = { get active() { return on; }, show, hide, toggle };
+    const reloadActive = () => { const wv = views.get(active); if (wv && wv.__ready) try { wv.reload(); } catch { /* */ } };
+    window.fbBrowser = { get active() { return on; }, show, hide, toggle, reload: reloadActive };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
