@@ -2140,6 +2140,13 @@ function bindEvents() {
       const idx = Number(e.key) - 1;
       if (typeof term !== 'undefined' && term.sessions[idx]) { e.preventDefault(); if ($('#terminal-panel').classList.contains('hidden')) term.open(); term.activate(term.sessions[idx].id); return; }
     }
+    // ⌘←/→ 切换前/后终端标签（焦点在终端区域时）
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && typeof term !== 'undefined' && term.sessions.length > 1 && $('#terminal-panel').contains(document.activeElement)) {
+      e.preventDefault();
+      const ci = term.sessions.findIndex((x) => x.id === term.active);
+      const ni = e.key === 'ArrowLeft' ? (ci - 1 + term.sessions.length) % term.sessions.length : (ci + 1) % term.sessions.length;
+      term.activate(term.sessions[ni].id); return;
+    }
     // ⌘W 关闭当前终端标签（焦点在终端区域时）
     if ((e.metaKey || e.ctrlKey) && (e.key === 'w' || e.key === 'W') && typeof term !== 'undefined' && term.active && $('#terminal-panel').contains(document.activeElement)) {
       e.preventDefault(); term.closeTab(term.active); return;
