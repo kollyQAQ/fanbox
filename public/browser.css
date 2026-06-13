@@ -45,6 +45,10 @@
 .bw-stack { flex: 1; position: relative; background: var(--bg); }
 .bw-stack webview { position: absolute; inset: 0; visibility: hidden; } /* 切换=显隐，滚动/历史/登录态全保留 */
 .bw-stack webview.bw-on { visibility: visible; }
+/* 离开浏览器模式（panel 无 .on）时强制压制所有 webview：CSS 里子元素显式 visibility:visible
+   会覆盖父的 visibility:hidden，光靠 panel 隐藏盖不住 webview，必须在此显式压制，否则
+   网页会透出浮在文件区上方。优先级 (1,1,1) 高于 .bw-stack webview.bw-on (0,2,1) */
+#browser-panel:not(.on) webview { visibility: hidden; }
 
 /* ---- 空状态 ---- */
 .bw-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-dim); }
