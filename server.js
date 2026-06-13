@@ -60,9 +60,12 @@ const MIME = {
 // ---------- 工具函数 ----------
 
 function ext(name) {
-  const i = name.lastIndexOf('.');
-  if (i <= 0) return '';
-  return name.slice(i + 1).toLowerCase();
+  // 取 basename 再找点：点开头的隐藏文件（.gitignore/.env）把点后部分当扩展名，
+  // 与 TEXT_EXT 里已有的 'gitignore'/'env' 对上；否则传完整路径和传文件名结果不一致
+  const base = name.slice(name.lastIndexOf('/') + 1);
+  const i = base.lastIndexOf('.');
+  if (i < 0) return '';
+  return base.slice(i + 1).toLowerCase();
 }
 
 // 从一组文件/目录名推断项目类型（签名文件），供当前目录徽章 + 子目录浅探共用
