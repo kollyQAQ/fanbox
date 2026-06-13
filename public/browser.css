@@ -1,13 +1,8 @@
 /* browser: 内嵌浏览器（轻量多站点视图）—— 样式 100% 独立于 style.css，bw- 前缀，只吃皮肤变量 */
 #filemgmt { position: relative; } /* 面板锚定文件区（覆盖式，webview 常驻保活） */
 
-/* 侧栏入口：降级版（非 Electron）必须自带 display:none 真隐藏——style.css 的 .hidden
-   不是通用规则，只命中个别元素，不写这行入口会在浏览器版暴露出来；
-   桌面版接管 #skills-entry 的 margin-top:auto 压底职责，让两个入口等距贴在一起 */
-#browser-entry.hidden { display: none; }
-#browser-entry { margin-top: auto; padding: 12px 16px 0; border-top: 1px solid var(--border); cursor: pointer; user-select: none; }
-#browser-entry:hover { color: var(--text-dim); }
-#browser-entry:not(.hidden) ~ #skills-entry { margin-top: 0; border-top: none; padding-top: 12px; }
+/* 降级版（非 Electron）没有 webview，顶栏入口必须真隐藏。 */
+:root:not(.desktop) #btn-browser { display: none; }
 
 #browser-panel {
   position: absolute; inset: 0; z-index: 6;

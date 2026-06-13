@@ -71,12 +71,20 @@
   };
 
   // ---------- 模式切换 ----------
+  // 顶栏按钮高亮跟随浏览器模式开关
+  function syncBtn() { const b = document.getElementById('btn-browser'); if (b) b.classList.toggle('active', on); }
+  // 顶栏按钮点击：开着就关、关着就开
+  function toggle() {
+    if (on) { hide(); restoreFileView(); } // 主动关闭无触发方，自己恢复文件视图
+    else show();
+  }
   function show() {
     if (!on) {
       on = true;
       // 互斥：压掉文件区的特殊模式（直接改上游 state 对象，不改上游代码；上游重构时静默降级）
       try { state.skillsMode = false; state.recentMode = false; state.cursor = -1; } catch { /* */ }
       $('#browser-panel').classList.add('on');
+      syncBtn();
     }
     $('#breadcrumb').innerHTML = '<span class="crumb last">浏览器</span>';
     if (!active && sites.length) active = sites[0].id;
@@ -87,7 +95,18 @@
     if (!on) return;
     on = false;
     $('#browser-panel').classList.remove('on');
-    // 面包屑/文件区由触发方（navigate / skillsView / showRecent）自己渲染，这里不管
+    syncBtn();
+    // 面包屑/文件区：navigate / skillsView / showRecent 触发时由它们自己渲染；
+    // 顶栏按钮主动关闭走 toggle()，那里单独补一次 renderBreadcrumb
+  }
+  async function restoreFileView() {
+    try {
+      state.skillsMode = false;
+      state.recentMode = false;
+      state.cursor = -1;
+      if (state.cwd) await navigate(state.cwd, false);
+      else { renderFiles(); renderBreadcrumb(); }
+    } catch { /* 上游重构则静默降级 */ }
   }
 
   // ---------- 标签条 ----------
@@ -284,15 +303,14 @@
 
   // ---------- 启动 ----------
   function init() {
-    const entry = document.getElementById('browser-entry');
+    const btn = document.getElementById('btn-browser');
     const panel = document.getElementById('browser-panel');
-    if (!entry || !panel) return;
-    if (!isApp) return; // 浏览器降级版：webview 不存在，入口保持隐藏，整个功能不启用
-    entry.classList.remove('hidden');
-    entry.onclick = show;
+    if (!btn || !panel) return;
+    if (!isApp) return; // 浏览器降级版：webview 不存在，按钮由 CSS（.desktop 门控）隐藏，整个功能不启用
+    btn.onclick = toggle;
     buildAddrBar();
     hooks();
-    window.fbBrowser = { get active() { return on; }, show, hide };
+    window.fbBrowser = { get active() { return on; }, show, hide, toggle };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();

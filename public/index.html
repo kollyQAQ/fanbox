@@ -40,11 +40,6 @@
         <ul id="agent-projects-list" class="nav-list"></ul>
       </nav>
 
-      <!-- browser: 内嵌浏览器入口（非桌面端由 browser.js 保持隐藏） -->
-      <div id="browser-entry" class="nav-title side-link hidden" title="内嵌浏览器：知乎热榜 / GitHub / Twitter 这类轻量浏览不用跳出去">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-        浏览器
-      </div>
       <div id="skills-entry" class="nav-title side-link" title="本机 Claude Code / Codex 的全部 skills：谁在干活、谁在吃灰、谁在静默失效">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="17.5" y1="14" x2="17.5" y2="21"/><line x1="14" y1="17.5" x2="21" y2="17.5"/></svg>
         Skills 透视
@@ -98,6 +93,7 @@
           <button id="btn-changes" class="ghost-btn" title="本会话 agent 改过的文件（点击回看 / diff）"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg><span id="changes-badge" class="changes-badge hidden"></span></button>
           <button id="btn-recent" class="ghost-btn" title="此处最近修改的文件"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button>
           <button id="btn-terminal" class="ghost-btn" title="在当前目录打开系统终端"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> 终端</button>
+          <button id="btn-browser" class="ghost-btn" title="内嵌浏览器：知乎热榜 / GitHub / Twitter 这类轻量浏览不用跳出去"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> 浏览器</button>
         </div>
       </header>
 
