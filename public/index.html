@@ -40,6 +40,11 @@
         <ul id="agent-projects-list" class="nav-list"></ul>
       </nav>
 
+      <!-- browser: 内嵌浏览器入口（非桌面端由 browser.js 保持隐藏） -->
+      <div id="browser-entry" class="nav-title side-link hidden" title="内嵌浏览器：知乎热榜 / GitHub / Twitter 这类轻量浏览不用跳出去">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        浏览器
+      </div>
       <div id="skills-entry" class="nav-title side-link" title="本机 Claude Code / Codex 的全部 skills：谁在干活、谁在吃灰、谁在静默失效">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="17.5" y1="14" x2="17.5" y2="21"/><line x1="14" y1="17.5" x2="21" y2="17.5"/></svg>
         Skills 透视
@@ -112,6 +117,12 @@
           <div class="preview-body" id="preview-body"></div>
           <div class="preview-foot" id="preview-foot"></div>
         </section>
+        <!-- browser: 内嵌浏览器面板（覆盖文件区，webview 常驻保活，样式在 browser.css） -->
+        <section id="browser-panel">
+          <div class="bw-tabs" id="bw-tabs"></div>
+          <div class="bw-addr hidden" id="bw-addr"></div>
+          <div class="bw-stack" id="bw-stack"></div>
+        </section>
         </div>
         <div id="terminal-resizer" class="hidden"></div>
         <section id="terminal-panel" class="hidden">
@@ -162,5 +173,8 @@
   <script src="/i18n-dict.js" onerror="window.__noDict=1"></script>
   <script src="/i18n.js"></script>
   <script src="/app.js"></script>
+  <!-- browser: 内嵌浏览器（独立模块，必须在 app.js 之后加载） -->
+  <link rel="stylesheet" href="/browser.css" />
+  <script src="/browser.js"></script>
 </body>
 </html>
