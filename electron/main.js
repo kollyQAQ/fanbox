@@ -50,6 +50,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true, // browser: 内嵌浏览器（public/browser.js）需要 <webview>
     },
   });
   // 拖动/缩放后防抖记忆，关窗再存一次兜底
@@ -389,4 +390,14 @@ ipcMain.handle('fs:watch', (e, { dir }) => {
   for (const [d, w] of watchers) { if (d !== dir) { try { w.close(); } catch { /* */ } watchers.delete(d); } }
   startWatch(dir);
   return { ok: true };
+});
+
+// ---------- browser: 内嵌浏览器（public/browser.js）----------
+// webview 里的弹窗（window.open / target=_blank）一律转为就地导航，不开新窗口不跳系统浏览器
+app.on('web-contents-created', (e, wc) => {
+  if (wc.getType() !== 'webview') return;
+  wc.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/.test(url)) wc.loadURL(url);
+    return { action: 'deny' };
+  });
 });
