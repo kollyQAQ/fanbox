@@ -411,7 +411,7 @@ async function recentFiles(rootPath) {
 
 async function writeTextFile(p, content, expectedMtime) {
   const file = resolvePath(p);
-  if (!TEXT_EXT.has(ext(file))) throw new Error('只支持文本类文件编辑');
+  if (kindOf(path.basename(file), false) !== 'text') throw new Error('只支持文本类文件编辑');
   if (typeof content !== 'string') throw new Error('内容非法');
   // 并发覆盖保护：打开编辑后文件被外部（agent）改过或删除，拒绝盲覆盖
   if (expectedMtime) {
@@ -998,7 +998,7 @@ async function gitStatus(dirPath) {
 // 单文件 HEAD 版本 vs 工作区当前内容，供 Monaco DiffEditor 并排渲染
 async function gitFileDiff(p) {
   const file = resolvePath(p);
-  if (!TEXT_EXT.has(ext(file))) return { isRepo: true, diffable: false };
+  if (kindOf(path.basename(file), false) !== 'text') return { isRepo: true, diffable: false };
   const root = await gitRoot(path.dirname(file));
   if (!root) return { isRepo: false };
   const rel = path.relative(root, file).split(path.sep).join('/');
