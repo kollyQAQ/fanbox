@@ -2228,8 +2228,8 @@ function bindEvents() {
     if (e.key === 'Escape' && !$('#preview').classList.contains('hidden')) { closePreview(); return; }
     if ((e.metaKey || e.ctrlKey) && e.key === '[') { e.preventDefault(); goBack(); return; }
     if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); toggleSidebar(); return; }
-    // ⌘B 打开/关闭浏览器模块（browser.js 提供 toggleBrowser）
-    if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !e.shiftKey) { e.preventDefault(); if (typeof toggleBrowser === 'function') toggleBrowser(); return; }
+    // ⌘B 打开/关闭浏览器模块（browser.js 暴露 window.fbBrowser）
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !e.shiftKey) { e.preventDefault(); if (window.fbBrowser) window.fbBrowser.toggle(); return; }
     // ⌘N 新建终端标签
     if ((e.metaKey || e.ctrlKey) && (e.key === 'n' || e.key === 'N') && !e.shiftKey) { e.preventDefault(); if (typeof term !== 'undefined') { if ($('#terminal-panel').classList.contains('hidden')) term.open(); else term.newTab(); } return; }
     // ⌘P 切换隐藏文件显示
