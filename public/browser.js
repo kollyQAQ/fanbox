@@ -319,6 +319,15 @@
     btn.onclick = toggle;
     buildAddrBar();
     hooks();
+    // ⌘R 刷新当前浏览器页面（浏览器模式激活时拦截）
+    document.addEventListener('keydown', (e) => {
+      if (!on) return;
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === 'r' || e.key === 'R')) {
+        e.preventDefault();
+        const wv = views.get(active);
+        if (wv && wv.__ready) try { wv.reload(); } catch { /* */ }
+      }
+    });
     window.fbBrowser = { get active() { return on; }, show, hide, toggle };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
