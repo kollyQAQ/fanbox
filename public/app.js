@@ -3822,5 +3822,13 @@ function bindUpdateNotice() {
 // ⌘R 通过主进程菜单 → IPC → renderer：浏览器开着就刷 webview，否则静默
 if (window.fanboxShortcut) {
   window.fanboxShortcut.onReload(() => { if (window.fbBrowser && window.fbBrowser.active) window.fbBrowser.reload?.(); });
+  // ⌘W：终端焦点→关终端 tab，浏览器激活→关浏览器当前页，其他→无动作（不关窗口）
+  window.fanboxShortcut.onCloseTab(() => {
+    if (typeof term !== 'undefined' && term.active && document.querySelector('#terminal-panel')?.contains(document.activeElement)) {
+      term.closeTab(term.active);
+    } else if (window.fbBrowser && window.fbBrowser.active) {
+      window.fbBrowser.closeActive?.();
+    }
+  });
 }
 init();

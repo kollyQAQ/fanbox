@@ -226,7 +226,9 @@ function buildMenu() {
     ] }] : []),
     { label: M('文件', 'File'), submenu: [
       ...(isMac ? [] : [{ label: M('检查更新…', 'Check for Updates…'), click: () => checkUpdate({ manual: true }) }, { type: 'separator' }]),
-      isMac ? { role: 'close' } : { role: 'quit' },
+      isMac
+        ? { label: M('关闭标签', 'Close Tab'), accelerator: 'CmdOrCtrl+W', click: (_, w) => { if (w) w.webContents.send('shortcut:close-tab'); } }
+        : { role: 'quit' },
     ] },
     { label: M('编辑', 'Edit'), submenu: [
       { role: 'undo', label: M('撤销', 'Undo') }, { role: 'redo', label: M('重做', 'Redo') }, { type: 'separator' },
