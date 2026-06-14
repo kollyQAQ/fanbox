@@ -3819,9 +3819,8 @@ function bindUpdateNotice() {
     if (localStorage.getItem('fb_skip_ver') === version || document.querySelector('.update-pill')) return;
     const bar = document.createElement('div');
     bar.className = 'update-pill';
-    bar.innerHTML = `<span>新版本 v${escapeHtml(version)} 已发布</span><button class="up-go">去下载</button><button class="up-x" title="这个版本不再提醒">✕</button>`;
+    bar.innerHTML = `<span>新版本 v${escapeHtml(version)} 已发布</span><button class="up-x" title="这个版本不再提醒">✕</button>`;
     document.body.appendChild(bar);
-    bar.querySelector('.up-go').onclick = () => { window.fanboxUpdate.open(url); bar.remove(); };
     bar.querySelector('.up-x').onclick = () => { localStorage.setItem('fb_skip_ver', version); bar.remove(); };
   };
   window.fanboxUpdate.onAvailable(show);
