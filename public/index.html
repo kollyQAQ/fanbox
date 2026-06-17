@@ -88,6 +88,7 @@
             <button data-size="md" class="active" title="中">▪</button>
             <button data-size="lg" title="大">◼</button>
           </div>
+          <button id="btn-wechat" class="ghost-btn wechat-btn" title="连接微信 ClawBot（用微信驱动本机的 Claude Code / Codex）"><svg width="15" height="15" viewBox="0 0 24 24" fill="#07C160"><path d="M9 3C4.86 3 1.5 5.96 1.5 9.6c0 2.06 1.08 3.9 2.78 5.1L3.4 17.4l2.96-1.5c.83.23 1.72.36 2.64.36.23 0 .46-.01.68-.03A5.7 5.7 0 0 1 9.4 14c0-3.2 3.1-5.7 6.93-5.7.27 0 .54.02.8.05C16.6 5.2 13.1 3 9 3Zm-2.6 4.5a1.02 1.02 0 1 1 0 2.04 1.02 1.02 0 0 1 0-2.04Zm5.2 0a1.02 1.02 0 1 1 0 2.04 1.02 1.02 0 0 1 0-2.04Z"/><path d="M22.5 14.1c0-2.92-2.86-5.3-6.38-5.3s-6.38 2.38-6.38 5.3 2.86 5.3 6.38 5.3c.78 0 1.53-.12 2.22-.33l2.4 1.22-.66-2.02c1.47-.98 2.4-2.42 2.4-4.17Zm-8.5-1.2a.85.85 0 1 1 0-1.7.85.85 0 0 1 0 1.7Zm4.24 0a.85.85 0 1 1 0-1.7.85.85 0 0 1 0 1.7Z"/></svg><span id="wechat-dot" class="wechat-dot hidden"></span></button>
           <button id="btn-changes" class="ghost-btn" title="本会话 agent 改过的文件（点击回看 / diff）"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg><span id="changes-badge" class="changes-badge hidden"></span></button>
           <button id="btn-recent" class="ghost-btn" title="此处最近修改的文件"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button>
           <button id="btn-terminal" class="ghost-btn" title="在当前目录打开系统终端"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> 终端</button>
@@ -135,6 +136,7 @@
               <button id="term-newtab" title="新终端">＋</button>
               <button id="term-max" title="终端铺满"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
               <button id="term-dock" title="切换 上下 / 左右 布局">⇆</button>
+              <button id="term-replay" title="终端录像回放 / 导出视频"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
               <button id="term-mute" title="提示音开关">🔔</button>
               <button id="term-close" title="收起终端">✕</button>
             </div>
@@ -156,6 +158,44 @@
       </div>
       <div id="cmdk-hint" class="cmdk-hint">范围：<b id="cmdk-scope"></b> · Tab 切换范围 · ↑↓ 选择 · ↵ 打开 · ⌘↵ 在编辑器打开</div>
       <ul id="cmdk-results" class="cmdk-results"></ul>
+    </div>
+  </div>
+
+  <!-- 终端录像回放 -->
+  <div id="replay-overlay" class="replay-overlay hidden">
+    <div class="replay-panel">
+      <header class="replay-head">
+        <div class="replay-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg> 终端录像</div>
+        <div class="replay-sub" id="replay-sub">把 agent 干活的全过程压成几十秒回放</div>
+        <button id="replay-close" title="关闭 (Esc)">✕</button>
+      </header>
+      <div class="replay-body">
+        <aside class="replay-list" id="replay-list"></aside>
+        <div class="replay-stage">
+          <div class="replay-screen" id="replay-screen">
+            <div id="replay-host" class="replay-host"></div>
+            <div class="replay-empty" id="replay-empty">← 左侧选一段录像开始回放</div>
+          </div>
+          <div class="replay-controls hidden" id="replay-controls">
+            <button id="rp-play" class="rp-play" title="播放 / 暂停 (空格)"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
+            <span class="rp-time" id="rp-time">0:00 / 0:00</span>
+            <input type="range" id="rp-seek" class="rp-seek" min="0" max="1000" value="0" />
+            <label class="rp-field" title="把超过这个秒数的「等待空白」压缩掉（agent 思考、安装依赖等长时间静默）">空白封顶
+              <select id="rp-idle"><option value="0.3">0.3s</option><option value="0.6">0.6s</option><option value="1" selected>1s</option><option value="2">2s</option><option value="9999">不压</option></select>
+            </label>
+            <label class="rp-field" title="目标总时长：自动反推倍速，把整段压到这么长">目标时长
+              <select id="rp-target"><option value="">原速</option><option value="30">30s</option><option value="60" selected>60s</option><option value="90">90s</option><option value="120">2min</option></select>
+            </label>
+            <label class="rp-field" title="在目标时长基础上再叠加的倍速">倍速
+              <select id="rp-speed"><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option></select>
+            </label>
+            <label class="rp-field" title="MP4 通用 / GIF 适合发公众号·即刻 / WebM 体积小（GIF·MP4 需本机 ffmpeg）">导出
+              <select id="rp-format"><option value="mp4" selected>MP4</option><option value="gif">GIF</option><option value="webm">WebM</option></select>
+            </label>
+            <button id="rp-export" class="rp-export" title="按当前压缩节奏录制并导出">导出</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

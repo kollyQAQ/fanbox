@@ -16,6 +16,15 @@ contextBridge.exposeInMainWorld('fanboxPty', {
   onExit: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('pty:exit', h); return () => ipcRenderer.removeListener('pty:exit', h); },
 });
 
+contextBridge.exposeInMainWorld('fanboxRec', {
+  list: () => ipcRenderer.invoke('rec:list'),
+  read: (path) => ipcRenderer.invoke('rec:read', { path }),
+  remove: (path) => ipcRenderer.invoke('rec:delete', { path }),
+  reveal: (path) => ipcRenderer.invoke('rec:reveal', { path }),
+  saveExport: (name, buf) => ipcRenderer.invoke('rec:save-export', { name, buf }),
+  export: (name, buf, format) => ipcRenderer.invoke('rec:export', { name, buf, format }), // WebM 字节 → 按 format 转 mp4/gif（无 ffmpeg 退回 webm）
+});
+
 contextBridge.exposeInMainWorld('fanboxFs', {
   watch: (dir) => ipcRenderer.invoke('fs:watch', { dir }),
   watchSet: (dirs) => ipcRenderer.invoke('fs:watch-set', { dirs }),
@@ -62,4 +71,16 @@ contextBridge.exposeInMainWorld('fanboxEnv', {
 contextBridge.exposeInMainWorld('fanboxShortcut', {
   onReload: (cb) => { const h = () => cb(); ipcRenderer.on('shortcut:reload', h); return () => ipcRenderer.removeListener('shortcut:reload', h); },
   onCloseTab: (cb) => { const h = () => cb(); ipcRenderer.on('shortcut:close-tab', h); return () => ipcRenderer.removeListener('shortcut:close-tab', h); },
+});
+
+// 微信 ClawBot：扫码把微信接到本机 OpenClaw（→ Claude Code / Codex…），并读回对话内容
+contextBridge.exposeInMainWorld('fanboxWechat', {
+  env: () => ipcRenderer.invoke('wechat:env'),            // { installed, connected, account, agentModel }
+  login: () => ipcRenderer.invoke('wechat:login'),        // 启用插件→起网关→流式登录（二维码/成功走事件）
+  disconnect: () => ipcRenderer.invoke('wechat:disconnect'),
+  cancel: () => ipcRenderer.invoke('wechat:cancel'),      // 关弹窗时停掉等待中的登录进程
+  sessions: () => ipcRenderer.invoke('wechat:sessions'),  // 微信对话会话列表
+  transcript: (sid) => ipcRenderer.invoke('wechat:transcript', { sid }), // 读对话正文
+  onQr: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('wechat:qr', h); return () => ipcRenderer.removeListener('wechat:qr', h); },
+  onConnected: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('wechat:connected', h); return () => ipcRenderer.removeListener('wechat:connected', h); },
 });

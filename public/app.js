@@ -209,6 +209,15 @@ function fmtSize(n) {
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
   return `${v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
 }
+// 秒 → 人话时长（录像列表用）：93→「1分33秒」、5400→「1小时30分」、20→「20秒」
+function fmtDur(sec) {
+  sec = Math.round(sec || 0);
+  if (sec < 60) return sec + '秒';
+  const m = Math.floor(sec / 60), s = sec % 60;
+  if (m < 60) return s ? `${m}分${s}秒` : `${m}分`;
+  const h = Math.floor(m / 60), mm = m % 60;
+  return mm ? `${h}小时${mm}分` : `${h}小时`;
+}
 function fmtTime(ms) {
   if (!ms) return '';
   const d = new Date(ms);
@@ -241,10 +250,12 @@ function escapeHtml(s) {
 let dirtyCheck = null; // () => boolean，true=有未保存改动；null=当前没有编辑器
 let autosaveFlush = null; // 自动保存编辑器挂上：离开前把未落盘的改动写掉，不弹「放弃？」
 let edStatusTimer = null; // 代码编辑器「xx 之前已保存」每秒刷新的定时器；编辑器关掉时自清
+// 当前打开的 md 编辑器，供「外部文件变更」时重载用。{ path, isDirty(), reload() }；离开时清空。
+let currentEditor = null;
 async function guardDirty() {
   if (autosaveFlush) {
     const f = autosaveFlush;
-    autosaveFlush = null; dirtyCheck = null;
+    autosaveFlush = null; dirtyCheck = null; currentEditor = null;
     await f();
     return true;
   }
@@ -499,6 +510,26 @@ async function dropFilesInto(fileList, dir) {
   const where = dir === state.cwd ? '' : '「' + baseOf(dir) + '」';
   toast(saved === 1 ? `已存入${where} ${baseOf(lastPath)}` : `已存入${where} ${saved} 个文件`);
   if (dir === state.cwd && !state.recentMode) { await refresh(); if (lastPath) applySelection(lastPath); }
+}
+// 拖入 app 内/外部的图片（微信收到的图、预览里的图等都是 <img>，拖动带的是图片 URL 而非系统文件）：
+// 取 URL → fetch 出字节 → 存进目标目录。只收图片，非图片忽略。
+async function dropUrlInto(url, dir) {
+  if (!window.fanboxDrop || !dir) { toast('该环境不支持拖入保存', true); return; }
+  url = (String(url || '').split(/[\r\n]/).find((l) => l && !l.trim().startsWith('#')) || '').trim(); // uri-list 可能多行/含 # 注释
+  if (!url) return;
+  let blob;
+  try { const r = await fetch(url); if (!r.ok) throw 0; blob = await r.blob(); }
+  catch { toast('读不到拖入的图片', true); return; }
+  if (!/^image\//.test(blob.type)) { toast('目前只支持拖入图片', true); return; }
+  const e = ((blob.type.split('/')[1] || 'png').toLowerCase().replace('jpeg', 'jpg').replace(/[^a-z0-9]/g, '')) || 'png';
+  let name = '';
+  try { name = baseOf(decodeURIComponent(new URL(url, location.href).pathname)); } catch { /* blob:/data: 无 pathname */ }
+  if (!name || !/\.[a-z0-9]+$/i.test(name)) name = `image-${Date.now()}.${e}`;
+  const r = await window.fanboxDrop.saveInto(dir, name, await blob.arrayBuffer()).catch(() => null);
+  if (!r || !r.ok) { toast('存入失败', true); return; }
+  const where = dir === state.cwd ? '' : '「' + baseOf(dir) + '」';
+  toast(`已存入${where} ${baseOf(r.path)}`);
+  if (dir === state.cwd && !state.recentMode) { await refresh(); if (r.path) applySelection(r.path); }
 }
 // 让任意元素可拖拽出一个路径（侧栏目录/收藏 → 终端）
 function makeDraggablePath(el, p) {
@@ -1189,6 +1220,7 @@ async function refresh() {
 async function enterEditMode(e) {
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停'); // 编辑时绝不能被跟随抢屏
   if (!await guardDirty()) return;
+  currentEditor = null; // 新编辑器接管前先清旧重载钩子；md 会在 mdEditor 里重新挂
   mona.disposeIfAny();
   crepe.disposeIfAny();
   showPreviewPanel();
@@ -1307,11 +1339,23 @@ async function enterEditMode(e) {
 async function mdEditor(e, data, mode = 'rich') {
   const body = $('#preview-body');
   let baseMtime = data.mtime;
-  let content0 = data.content || '';
+  let content0 = data.content || ''; // canonical：磁盘原始 markdown，唯一事实源；编辑器只从它初始化
   let getValue = null, baseline = '';
   let timer = null, paused = false;
+  let forceCode = false; // 该文件 Milkdown 往返有损 → 锁源码模式，富文本按钮灰显（用户选「无损才用富文本」）
+  let reloading = false; // 外部变更重载 in-flight 锁：fs.watch 同一文件会连发多个事件，去重防并发 render 互踩
   let chain = Promise.resolve(); // 写盘串行化：防抖到点的保存和离开时的 flush 不互相踩
   const setStatus = (t) => { const s = $('#md-status'); if (s) s.textContent = t; };
+  // Milkdown 往返是否「语义无损」：所见即所得必然规范化语法（- → *、紧凑列表变松散、强调记号等），逐字节比会把干净文件也误判有损。
+  // 改用渲染结果比对：两份 markdown 渲成 HTML（去掉 <p> 包裹消除松/紧列表假阳性 + 折叠空白）后相等 = 内容无损 → 放行富文本；
+  // 不等 = 真丢了内容（如 <br/> 被吞、HTML 被删）→ 锁源码。marked 不可用时退回严格比对（保守锁源码，绝不误放行有损）。
+  const semanticEqual = (a, b) => {
+    if (!window.marked || window.__noMarked) return a === b;
+    let ha, hb;
+    try { ha = window.marked.parse(a || ''); hb = window.marked.parse(b || ''); } catch { return a === b; }
+    const n = (s) => String(s).replace(/>\s+</g, '><').replace(/<\/?p>/g, '').replace(/\s+/g, ' ').trim();
+    return n(ha) === n(hb);
+  };
   const doSave = async (force) => {
     if (!getValue || paused) return;
     const content = getValue();
@@ -1327,7 +1371,7 @@ async function mdEditor(e, data, mode = 'rich') {
       return;
     }
     if (r.ok === false || r.error) { setStatus('保存失败'); toast('保存失败：' + (r.error || ''), true); return; }
-    baseMtime = r.mtime; baseline = content;
+    baseMtime = r.mtime; baseline = content; content0 = content; // 落盘成功 → canonical 跟进，重载基准对齐
     setStatus('已保存');
   };
   const queue = () => { clearTimeout(timer); timer = setTimeout(() => { chain = chain.then(() => doSave()); }, 800); };
@@ -1335,14 +1379,18 @@ async function mdEditor(e, data, mode = 'rich') {
   autosaveFlush = flush;
   dirtyCheck = null;
   const render = async (m) => {
+    if (forceCode) m = 'code'; // 有损文件只允许源码，杜绝静默改写
     mode = m;
     mona.disposeIfAny(); crepe.disposeIfAny();
+    const dis = forceCode; // 富文本按钮是否灰显
     body.innerHTML =
-      `<div class="editor-bar"><button id="md-mode" class="ghost-btn">${m === 'rich' ? '源码' : '富文本'}</button><span id="md-status" class="editor-hint">自动保存 · ⌘S 立即保存</span></div>` +
+      `<div class="editor-bar"><button id="md-mode" class="ghost-btn"${dis ? ' disabled title="此文件含富文本无法无损保存的语法，已锁定源码模式"' : ''}>${m === 'rich' ? '源码' : '富文本'}</button><span id="md-status" class="editor-hint">${dis ? '源码模式（此文件富文本往返有损，已锁定）' : '自动保存 · ⌘S 立即保存'}</span></div>` +
       `<div id="ed-host" class="${m === 'rich' ? 'crepe-host' : 'mona-host'}"></div>`;
-    $('#md-mode').onclick = async () => {
+    const modeBtn = $('#md-mode');
+    if (modeBtn && !dis) modeBtn.onclick = async () => {
       await flush();
-      content0 = getValue ? getValue() : content0;
+      const cur = getValue ? getValue() : content0;
+      if (cur !== baseline) content0 = cur; // 只有真编辑过才采纳编辑器的值；没改就保留磁盘原文，源码视图不被 Milkdown 规范化
       render(m === 'rich' ? 'code' : 'rich');
     };
     const host = $('#ed-host');
@@ -1353,9 +1401,16 @@ async function mdEditor(e, data, mode = 'rich') {
       const fm = /^(---\r?\n[\s\S]*?\r?\n---\r?\n)/.exec(content0);
       const front = fm ? fm[1] : '';
       const inst = new C.Crepe({ root: host, defaultValue: front ? content0.slice(front.length) : content0 });
+      await inst.create();
+      // 语义无损校验：Milkdown 序列化回来若渲染结果和磁盘原文不同（<br/> 被吞、HTML 被删等真丢内容）→ 锁源码，绝不让它静默落盘
+      if (!semanticEqual(front + inst.getMarkdown(), content0)) {
+        crepe.disposeIfAny();
+        forceCode = true;
+        toast('此文件含富文本无法无损表示的内容，已切到源码模式编辑');
+        return render('code');
+      }
       try { inst.on((l) => l.markdownUpdated(() => queue())); } catch { /* 旧版 Crepe 无 .on，靠下面的 input 兜底 */ }
       host.addEventListener('input', () => queue(), true); // 兜底：键入路径一定触发
-      await inst.create();
       crepe.editor = inst;
       getValue = () => front + inst.getMarkdown();
       // ⌘S 立即保存：捕获阶段拦在 ProseMirror 与全局键盘导航之前
@@ -1388,6 +1443,25 @@ async function mdEditor(e, data, mode = 'rich') {
       });
     }
     baseline = getValue(); // 以编辑器规范化后的内容为基准：打开不编辑就不会触发写盘
+  };
+  // 外部变更重载钩子（option 4）：编辑器未脏 → 静默重载磁盘最新内容；脏 → 不动，靠保存时的 mtime 冲突保护兜底
+  currentEditor = {
+    path: e.path,
+    // 防御：render 切换/重载途中旧编辑器已 dispose、新 getValue 未赋值，此刻被调到就当「未脏」放行重载
+    isDirty: () => { try { return !!getValue && getValue() !== baseline; } catch { return false; } },
+    reload: async () => {
+      if (reloading) return; // 同一文件连发多个变更事件 → 只跑一次，避免并发 render 互相 dispose
+      reloading = true;
+      try {
+        const fresh = await api('/api/read?path=' + encodeURIComponent(e.path));
+        if (!fresh || fresh.error || fresh.tooLarge) return;
+        if (Math.abs((fresh.mtime || 0) - baseMtime) <= 1) return; // 自己刚写的 / 无实质变化，不折腾（容差对齐 server 端冲突判定）
+        const wasForced = forceCode; // 之前是被迫锁源码的吗？
+        content0 = fresh.content || ''; baseMtime = fresh.mtime; forceCode = false; // 重新读盘 → 重做无损判定
+        await render(wasForced ? 'rich' : mode); // 被迫锁源码过 → 重走富文本入口重判无损（锁定指示器才准）；否则保持当前模式
+        toast('文件已被外部更新，编辑器已重新加载');
+      } finally { reloading = false; }
+    },
   };
   await render(mode);
 }
@@ -1473,7 +1547,7 @@ const shotTray = {
     const el = document.createElement('div');
     el.className = 'shot-card';
     el.innerHTML = `
-      <img class="shot-thumb" draggable="true" src="/api/thumb?path=${encodeURIComponent(m.path)}&w=480&v=${m.size}" title="新截图 · 可拖进终端">
+      <img class="shot-thumb" draggable="true" src="/api/thumb?path=${encodeURIComponent(m.path)}&w=480&v=${m.size}" title="新截图 · 可拖进终端" data-retry="0">
       <div class="shot-info"><div class="shot-name">${escapeHtml(m.name)}</div>
       <div class="shot-acts">
         <button data-act="term" title="把路径喂给终端里的 agent">→ 终端</button>
@@ -1484,6 +1558,13 @@ const shotTray = {
     document.body.appendChild(el);
     this.el = el;
     const img = el.querySelector('.shot-thumb');
+    // 缩略图首次加载偶尔失败（文件刚写完、缩略图还在生成）：重试几次再放弃，别一裂到底
+    img.onerror = () => {
+      const n = +(img.dataset.retry || 0);
+      if (n >= 4) { img.style.visibility = 'hidden'; return; } // 实在不行就藏掉裂图，不难看
+      img.dataset.retry = n + 1;
+      setTimeout(() => { img.src = `/api/thumb?path=${encodeURIComponent(m.path)}&w=480&v=${m.size}&r=${n + 1}`; }, 400 * (n + 1));
+    };
     img.ondragstart = (ev) => ev.dataTransfer.setData('text/plain', m.path);
     img.onclick = () => lightbox(m.path);
     el.querySelector('[data-act=term]').onclick = () => { term.insertPath(m.path); this.dismiss(); };
@@ -2107,6 +2188,102 @@ function bindTerminalResizer() {
   });
 }
 
+// ---------- 微信 ClawBot：扫码把微信接到本机 OpenClaw（→ Claude Code / Codex），点图标看对话 ----------
+const wechatPanel = {
+  ov: null, offQr: null, offConn: null, pollTimer: null, onKey: null,
+  async open() {
+    if (!window.fanboxWechat) { toast('微信连接需在 FanBox 桌面版使用', true); return; }
+    if (this.ov) return;
+    const ov = document.createElement('div');
+    ov.className = 'input-overlay';
+    ov.innerHTML = `<div class="input-dialog wechat-dialog">
+      <div class="input-title">微信 ClawBot <span class="wx-sub">用微信驱动本机的 Claude Code / Codex</span></div>
+      <div class="wx-body"><div class="wx-loading">检测环境…</div></div>
+      <div class="input-actions"><button class="ghost-btn" data-act="close">关闭</button></div></div>`;
+    document.body.appendChild(ov);
+    this.ov = ov;
+    const close = () => this.close();
+    ov.querySelector('[data-act=close]').onclick = close;
+    ov.onclick = (ev) => { if (ev.target === ov) close(); };
+    this.onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
+    document.addEventListener('keydown', this.onKey, true);
+    await this.detect();
+  },
+  body() { return this.ov && this.ov.querySelector('.wx-body'); },
+  async detect() {
+    const env = await window.fanboxWechat.env().catch(() => ({ installed: false }));
+    if (!this.body()) return;
+    wechatPanel.syncDot(!!env.connected);
+    if (!env.installed) this.renderNeedInstall();
+    else if (env.connected) this.renderConnected(env);
+    else this.renderScan();
+  },
+  syncDot(on) { const d = $('#wechat-dot'); if (d) d.classList.toggle('hidden', !on); },
+  renderNeedInstall() {
+    const b = this.body(); if (!b) return;
+    b.innerHTML = `<div class="wx-step">
+      <p>还没装 OpenClaw（微信 ClawBot 的本机中转）。在终端跑这条装好后再回来：</p>
+      <pre class="wx-cmd">npm i -g openclaw</pre>
+      <button class="primary" data-act="recheck">装好了，重新检测</button></div>`;
+    b.querySelector('[data-act=recheck]').onclick = () => this.detect();
+  },
+  renderScan() {
+    this.teardownLogin();
+    const b = this.body(); if (!b) return;
+    b.innerHTML = `<div class="wx-scan"><div class="wx-qr"><div class="wx-loading">生成二维码…</div></div>
+      <p class="wx-hint">用手机微信「扫一扫」，在手机上点「连接」。<br>连上后这里会自动显示对话内容。</p></div>`;
+    this.offQr = window.fanboxWechat.onQr((m) => {
+      const qr = this.ov && this.ov.querySelector('.wx-qr'); if (!qr) return;
+      qr.innerHTML = m.dataUrl ? `<img class="wx-qr-img" src="${m.dataUrl}" alt="微信登录二维码">`
+        : `<p class="wx-hint">二维码生成失败，可在手机打开此链接：<br>${escapeHtml(m.url)}</p>`;
+    });
+    this.offConn = window.fanboxWechat.onConnected(async () => {
+      const env = await window.fanboxWechat.env().catch(() => ({ connected: true }));
+      this.renderConnected(env);
+    });
+    window.fanboxWechat.login().then((r) => {
+      if (r && !r.ok) { const qr = this.ov && this.ov.querySelector('.wx-qr'); if (qr) qr.innerHTML = `<p class="wx-hint">${escapeHtml(r.error || '启动登录失败')}</p>`; }
+    });
+  },
+  async renderConnected(env) {
+    this.teardownLogin();
+    this.syncDot(true);
+    const b = this.body(); if (!b) return;
+    const who = (env && env.agentModel) ? env.agentModel : '本机 agent';
+    b.innerHTML = `<div class="wx-conn">
+      <div class="wx-conn-bar"><span class="wx-on">● 已连接</span><span class="wx-who">微信 → ${escapeHtml(who)}</span><button class="ghost-btn wx-sm" data-act="disc">断开</button></div>
+      <div class="wx-chat"><div class="wx-loading">读取对话…</div></div></div>`;
+    b.querySelector('[data-act=disc]').onclick = async () => { await window.fanboxWechat.disconnect(); this.syncDot(false); this.renderScan(); };
+    await this.loadChat();
+    clearInterval(this.pollTimer);
+    this.pollTimer = setInterval(() => this.loadChat(), 4000); // 准实时刷新对话
+  },
+  async loadChat() {
+    const chat = this.ov && this.ov.querySelector('.wx-chat'); if (!chat) return;
+    const s = await window.fanboxWechat.sessions().catch(() => ({ items: [] }));
+    const sid = s.items && s.items[0] && s.items[0].id;
+    if (!sid) { chat.innerHTML = `<p class="wx-hint">还没有对话。去微信里给「微信ClawBot」发条消息试试。</p>`; return; }
+    const t = await window.fanboxWechat.transcript(sid).catch(() => ({ msgs: [] }));
+    const msgs = t.msgs || [];
+    if (!msgs.length) { chat.innerHTML = `<p class="wx-hint">还没有对话内容。</p>`; return; }
+    const last = msgs[msgs.length - 1];
+    const sig = msgs.length + ':' + (last.text || '').slice(0, 24);
+    if (chat.dataset.sig === sig) return; // 内容没变就不重渲染，别打断滚动
+    const atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
+    chat.innerHTML = msgs.map((m) => `<div class="wx-msg ${m.role === 'user' ? 'me' : 'bot'}">${escapeHtml(m.text)}</div>`).join('');
+    chat.dataset.sig = sig;
+    if (atBottom) chat.scrollTop = chat.scrollHeight;
+  },
+  teardownLogin() { if (this.offQr) { this.offQr(); this.offQr = null; } if (this.offConn) { this.offConn(); this.offConn = null; } },
+  close() {
+    this.teardownLogin();
+    clearInterval(this.pollTimer); this.pollTimer = null;
+    try { window.fanboxWechat && window.fanboxWechat.cancel(); } catch { /* */ }
+    if (this.onKey) { document.removeEventListener('keydown', this.onKey, true); this.onKey = null; }
+    if (this.ov) { this.ov.remove(); this.ov = null; }
+  },
+};
+
 // ---------- 事件绑定 ----------
 function bindEvents() {
   // 顶栏窄时分级藏低频控件（观测自身宽度而非视口——侧栏会吃掉一截且可折叠）
@@ -2123,6 +2300,9 @@ function bindEvents() {
   $('#cmdk-trigger').onclick = () => cmdk.open();
   $('#btn-recent').onclick = showRecent;
   $('#btn-changes').onclick = () => toggleChangesPanel();
+  $('#btn-wechat').onclick = () => wechatPanel.open();
+  // 启动时点一下连接状态，连着就给图标点个绿点（不挡初始化）
+  if (window.fanboxWechat) window.fanboxWechat.env().then((e) => wechatPanel.syncDot(!!(e && e.connected))).catch(() => {});
   $('#btn-terminal').onclick = () => term.toggle();
   $('#term-claude').onclick = () => term.launchAgent('claude --dangerously-skip-permissions');
   $('#term-codex').onclick = () => term.launchAgent('codex --yolo');
@@ -2138,6 +2318,7 @@ function bindEvents() {
     term.toggleMax();
   });
   $('#term-dock').onclick = () => term.setDock(term.dock === 'bottom' ? 'right' : 'bottom');
+  $('#term-replay').onclick = () => player.open();
   const muteBtn = $('#term-mute');
   const syncMute = () => { muteBtn.textContent = state.muted ? '🔕' : '🔔'; muteBtn.title = state.muted ? '提示音已关（点击开启）' : '提示音已开（点击静音）'; };
   syncMute();
@@ -2197,11 +2378,13 @@ function bindEvents() {
   $('#file-area').addEventListener('dblclick', blankMenu);
   $('#file-area').addEventListener('contextmenu', blankMenu);
   // 拖入文件区 = 存进当前目录；拖到某文件夹图标上 = 存进那个文件夹（截图浮窗、Finder 文件都行）。
-  // 只接「外部文件」拖入（dataTransfer 里有 Files）；fanbox 内部拖拽不带 Files，不受影响。
+  // 接两类：①「外部文件」拖入（dataTransfer 里有 Files）；② app 内/外部图片拖入（带 text/uri-list 的 <img>，如微信收到的图、预览里的图）。
+  // fanbox 内部路径拖拽（带 application/x-fanbox-path，拖去终端用）排除在外，不受影响。
   const fileArea = $('#file-area');
+  const droppableTypes = (t) => t.includes('Files') || (t.includes('text/uri-list') && !t.includes('application/x-fanbox-path'));
   const clearDropHi = () => { fileArea.classList.remove('area-drop'); fileArea.querySelectorAll('.item.drop-into').forEach((x) => x.classList.remove('drop-into')); };
   fileArea.addEventListener('dragover', (ev) => {
-    if (state.skillsMode || !ev.dataTransfer.types.includes('Files')) return;
+    if (state.skillsMode || !droppableTypes(ev.dataTransfer.types)) return;
     ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy';
     const item = ev.target.closest('.item');
     const idx = item ? Number(item.dataset.idx) : -1;
@@ -2211,12 +2394,17 @@ function bindEvents() {
   });
   fileArea.addEventListener('dragleave', (ev) => { if (!fileArea.contains(ev.relatedTarget)) clearDropHi(); });
   fileArea.addEventListener('drop', async (ev) => {
-    if (state.skillsMode || !ev.dataTransfer.files || !ev.dataTransfer.files.length) return;
+    const dt = ev.dataTransfer;
+    const hasFiles = dt.files && dt.files.length;
+    const url = (!hasFiles && dt.types.includes('text/uri-list') && !dt.types.includes('application/x-fanbox-path')) ? dt.getData('text/uri-list') : '';
+    if (state.skillsMode || (!hasFiles && !url)) return;
     ev.preventDefault(); clearDropHi();
     const item = ev.target.closest('.item');
     const idx = item ? Number(item.dataset.idx) : -1;
     const over = idx >= 0 ? state.visible[idx] : null;
-    await dropFilesInto(ev.dataTransfer.files, over && over.isDir ? over.path : state.cwd);
+    const dir = over && over.isDir ? over.path : state.cwd;
+    if (hasFiles) await dropFilesInto(dt.files, dir);
+    else await dropUrlInto(url, dir);
   });
   $('#content').addEventListener('contextmenu', (e) => { if (!e.target.closest('#file-area')) blankMenu(e); });
   document.addEventListener('click', (e) => { if (!e.target.closest('#context-menu')) closeContextMenu(); });
@@ -2243,7 +2431,17 @@ function bindEvents() {
   $('#cmdk-input').oninput = (e) => cmdk.search(e.target.value);
   $('#cmdk').onclick = (e) => { if (e.target.id === 'cmdk') cmdk.close(); };
 
+  // 启动必为干净态：录像弹窗永远不在 app 打开时默认显示（HTML 已带 hidden，这里再兜一道）
+  try { $('#replay-overlay').classList.add('hidden'); } catch { /* */ }
+  // 录像弹窗的「保命逃生口」：不管 player 内部状态坏没坏，ESC 一定先把弹窗 DOM 藏掉，绝不困住用户
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#replay-overlay').classList.contains('hidden')) {
+      $('#replay-overlay').classList.add('hidden');
+      try { player.close(); } catch { /* player 坏了也没关系，上面已经把弹窗藏了 */ }
+    }
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (!$('#replay-overlay').classList.contains('hidden')) return; // 录像回放开着时，交给它自己的快捷键
     // 按住 ⌘/Ctrl 时终端 tab 显示序号提示
     if ((e.key === 'Meta' || e.key === 'Control') && typeof term !== 'undefined') $('#term-tabs')?.classList.add('show-idx');
     if (e.key === 'Escape' && $('#context-menu')) { closeContextMenu(); return; }
@@ -2335,6 +2533,335 @@ function applyTheme(skin, rerender = true) {
   }
 }
 
+// ---------- 终端录像回放（黑匣子的播放端）----------
+// 保真铁律：用和 live 终端完全相同的 xterm 配置（主题/字体/unicode11/对比度）回放原始字节流，
+// 画面就和当时逐像素一致。时间压缩是非破坏性变换（idle 封顶 + 目标时长反推 + 倍速），原始 .cast 不动。
+const player = {
+  xterm: null, raw: [], timeline: [], duration: 0, currentTime: 0, cursor: 0,
+  playing: false, _raf: 0, _wallStart: 0, _host: null, _canvasOk: false,
+  initCols: 80, initRows: 24, cols: 80, rows: 24, current: null, _wired: false,
+  opts: { idleCap: 1, target: 60, speed: 1 },
+
+  async open() {
+    const ov = $('#replay-overlay');
+    if (!ov) return;
+    if (!ov.classList.contains('hidden')) return; // 已打开，别重复绑监听（否则 keydown/resize 泄漏）
+    ov.classList.remove('hidden');
+    this._host = $('#replay-host');
+    if (!this._wired) this.wire();
+    this._onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); this.close(); }
+      else if (e.key === ' ' && this.timeline.length && !/SELECT|INPUT/.test((e.target.tagName || ''))) { e.preventDefault(); this.toggle(); }
+    };
+    this._onResize = () => { clearTimeout(this._resizeT); this._resizeT = setTimeout(() => this.rescale(), 120); };
+    document.addEventListener('keydown', this._onKey, true);
+    window.addEventListener('resize', this._onResize);
+    await this.loadList();
+  },
+  close() {
+    // 铁律：关闭永远无条件成功。先把弹窗藏掉（用户立刻解脱），再做清理；任何一步抛错都不许挡住关闭。
+    try { $('#replay-overlay').classList.add('hidden'); } catch { /* */ }
+    this._exporting = false; // 导出中也允许关：终止导出，不再阻塞
+    try { this.pause(); } catch { /* */ }
+    try { if (this._onKey) document.removeEventListener('keydown', this._onKey, true); } catch { /* */ }
+    try { if (this._onResize) window.removeEventListener('resize', this._onResize); } catch { /* */ }
+    try { this.teardownTerm(); } catch { /* */ }
+    this.current = null;
+  },
+  teardownTerm() {
+    if (this.xterm) { try { this.xterm.dispose(); } catch { /* */ } this.xterm = null; }
+    if (this._host) this._host.innerHTML = '';
+  },
+  wire() {
+    this._wired = true;
+    $('#replay-close').onclick = () => this.close();
+    $('#replay-overlay').addEventListener('mousedown', (e) => { if (e.target.id === 'replay-overlay') this.close(); });
+    $('#rp-play').onclick = () => this.toggle();
+    // 拖动 seek 用 rAF 节流：大录像每次 seek 是 O(N) 重放，不节流会卡死主线程
+    $('#rp-seek').addEventListener('input', (e) => { this.pause(); this._seekTo = this.duration * (e.target.value / 1000); if (this._seekRAF) return; this._seekRAF = requestAnimationFrame(() => { this._seekRAF = 0; this.seekTo(this._seekTo); }); });
+    $('#rp-idle').addEventListener('change', (e) => { this.opts.idleCap = parseFloat(e.target.value); this.recompute(); this.seekTo(this.firstAt); });
+    $('#rp-target').addEventListener('change', (e) => { this.opts.target = e.target.value ? parseFloat(e.target.value) : null; this.recompute(); this.seekTo(this.firstAt); });
+    $('#rp-speed').addEventListener('change', (e) => { this.opts.speed = parseFloat(e.target.value); this.recompute(); this.seekTo(this.firstAt); });
+    $('#rp-export').onclick = () => this.exportVideo();
+  },
+  async loadList() {
+    const box = $('#replay-list');
+    if (!window.fanboxRec) { box.innerHTML = '<div class="replay-empty-list">录像功能仅在桌面 App 内可用。</div>'; return; }
+    const r = await window.fanboxRec.list().catch(() => null);
+    const items = (r && r.items) || [];
+    if (!items.length) { box.innerHTML = '<div class="replay-empty-list">还没有录像。<br>打开一个终端跑跑 agent，<br>这里会自动出现黑匣子。</div>'; return; }
+    box.innerHTML = '';
+    items.forEach((it) => {
+      const el = document.createElement('div');
+      el.className = 'rp-item' + (this.current && this.current.path === it.path ? ' active' : '');
+      const when = new Date(it.startedAt || it.mtime);
+      const title = (it.cwd ? baseOf(it.cwd) : '') || it.name.replace(/\.cast$/, '');
+      const dur = it.duration ? fmtDur(it.duration) + ' · ' : '';
+      el.innerHTML = `<div class="rp-item-top">${it.recording ? '<span class="rp-dot-live" title="正在录"></span>' : ''}<span>${escapeHtml(title)}</span><span class="rp-item-del" title="删除">✕</span></div>`
+        + `<div class="rp-item-sub">${dur}${when.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${fmtSize(it.size)}</div>`;
+      el.querySelector('.rp-item-del').onclick = async (ev) => { ev.stopPropagation(); if (await confirmDialog('删除这段录像？')) { await window.fanboxRec.remove(it.path); this.loadList(); } };
+      el.onclick = () => this.select(it);
+      box.appendChild(el);
+    });
+  },
+  async select(it) {
+    if (this._exporting) { toast('导出进行中，请稍候…', true); return; } // 导出中切换会绑错画布产坏文件
+    const r = await window.fanboxRec.read(it.path).catch(() => null);
+    if (!r || !r.ok) { toast('读取录像失败', true); return; }
+    let header = null; const raw = [];
+    for (const line of r.text.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const v = JSON.parse(line);
+        if (!header && !Array.isArray(v)) { header = v; continue; }
+        if (Array.isArray(v) && (v[1] === 'o' || v[1] === 'r')) raw.push({ t: v[0], code: v[1], data: v[2] });
+      } catch { /* 跳过坏行 */ }
+    }
+    if (!header) { toast('录像为空或损坏', true); return; }
+    this.current = it;
+    this.raw = raw;
+    this.recTheme = (header.fanbox && header.fanbox.theme) || ''; // 录制时的皮肤：回放用它，颜色才和当时一致
+    this.initCols = this.cols = header.width || 80;
+    this.initRows = this.rows = header.height || 24;
+    $('#replay-empty').style.display = 'none';
+    $('#replay-controls').classList.remove('hidden');
+    this.loadList(); // 刷新选中态
+    this.buildTerm(this.initCols, this.initRows);
+    this.recompute();
+    this.seekTo(this.firstAt); // 选中即停在第一帧内容上，不再是空屏
+    setTimeout(() => { if (this.current === it) this.play(); }, 400); // 自动播放：选中即「活」起来
+  },
+  buildTerm(cols, rows) {
+    this.teardownTerm();
+    const x = new window.Terminal({
+      fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-term').trim() || 'monospace',
+      fontSize: 14, lineHeight: 1.2, cursorBlink: false, theme: (term.themes[this.recTheme] || term.theme()), scrollback: 0,
+      allowProposedApi: true, minimumContrastRatio: 4.5, cols, rows,
+    });
+    if (!window.__noUnicode11 && window.Unicode11Addon) {
+      try { const U = window.Unicode11Addon.Unicode11Addon || window.Unicode11Addon; x.loadAddon(new U()); x.unicode.activeVersion = '11'; } catch { /* */ }
+    }
+    x.open(this._host);
+    this._canvasOk = false;
+    if (!window.__noWebgl && window.WebglAddon) {
+      try { const W = window.WebglAddon.WebglAddon || window.WebglAddon; const w = new W(); w.onContextLoss(() => { try { w.dispose(); } catch { /* */ } }); x.loadAddon(w); this._canvasOk = true; } catch { /* 回退 DOM renderer：回放仍可，导出降级 */ }
+    }
+    this.xterm = x;
+    requestAnimationFrame(() => this.rescale());
+  },
+  // 不改 cols×rows（保证折行和当时一致），用 CSS transform 缩放整块以适配舞台
+  rescale() {
+    const screen = $('#replay-screen'), host = this._host;
+    if (!screen || !host || !this.xterm) return;
+    const el = host.querySelector('.xterm');
+    if (!el) return;
+    host.style.transform = 'none';
+    const natW = el.offsetWidth, natH = el.offsetHeight;
+    if (!natW || !natH) return;
+    const scale = Math.min((screen.clientWidth - 32) / natW, (screen.clientHeight - 32) / natH);
+    host.style.transform = `scale(${Math.max(0.1, scale)})`;
+  },
+  // 非破坏性时间变换。要害：压「等待」不压「流式输出」——把 2h 压成 1min 时，
+  // 被牺牲的应该是 agent 思考/装依赖的长静默，而连续吐字的节奏要原样保留，否则糊成闪屏。
+  recompute() {
+    const STREAM = 0.25; // ≤这个间隔算「流式输出节奏」，保留；更大的算「等待」，可压
+    const cap = this.opts.idleCap || 9999;
+    const target = this.opts.target;
+    const manual = this.opts.speed || 1;
+    // 1) 先按 idleCap 压每个间隔（封顶长等待）
+    let prev = 0; const gaps = [];
+    for (const e of this.raw) { let g = e.t - prev; prev = e.t; if (g < 0) g = 0; if (g > cap) g = cap; gaps.push({ g, code: e.code, data: e.data }); }
+    // 2) 设了目标时长：把「等待段」等比压缩去凑目标，「流式段」原样不动；
+    //    若光流式段就超目标，宁可超时也保可读（不把连续输出提速成闪屏）
+    if (target) {
+      let streamSum = 0, idleSum = 0;
+      for (const x of gaps) { if (x.g <= STREAM) streamSum += x.g; else idleSum += x.g; }
+      const idleBudget = Math.max(0, target - streamSum);
+      if (idleSum > idleBudget && idleSum > 0) { const k = idleBudget / idleSum; for (const x of gaps) if (x.g > STREAM) x.g *= k; }
+    }
+    // 3) 手动倍速叠加，累加成时间轴
+    let acc = 0; const tl = [];
+    for (const x of gaps) { acc += x.g / manual; tl.push({ at: acc, code: x.code, data: x.data }); }
+    this.timeline = tl;
+    this.duration = acc;
+    const fo = tl.find((x) => x.code === 'o'); // 第一帧有内容的时刻：避开开头空白，选中即见画面
+    this.firstAt = fo ? fo.at : 0;
+    this.updateTime();
+  },
+  apply(e) {
+    if (!this.xterm) return; // 回放中被关闭/切换会 dispose xterm，这里要挡住空引用
+    if (e.code === 'o') this.xterm.write(e.data);
+    else if (e.code === 'r') { const m = /^(\d+)x(\d+)$/.exec(e.data); if (m) { try { this.xterm.resize(+m[1], +m[2]); } catch { /* */ } requestAnimationFrame(() => this.rescale()); } }
+  },
+  seekTo(t) {
+    if (!this.xterm) return;
+    t = Math.max(0, Math.min(t, this.duration || 0));
+    // 后退才从头重放（终端是有状态的，回退必须重建）；前进只从当前 cursor 增量喂，
+    // 这样拖动长录像的进度条不会每次都 O(N) 全量重放卡死
+    if (t < this.currentTime - 1e-6) {
+      try { this.xterm.reset(); this.xterm.resize(this.initCols, this.initRows); } catch { /* */ }
+      this.cursor = 0;
+    }
+    let buf = ''; let resized = false;
+    for (; this.cursor < this.timeline.length && this.timeline[this.cursor].at <= t; this.cursor++) {
+      const e = this.timeline[this.cursor];
+      if (e.code === 'o') buf += e.data;
+      else if (e.code === 'r') { if (buf) { this.xterm.write(buf); buf = ''; } const m = /^(\d+)x(\d+)$/.exec(e.data); if (m) { try { this.xterm.resize(+m[1], +m[2]); resized = true; } catch { /* */ } } }
+    }
+    if (buf) this.xterm.write(buf);
+    if (resized) requestAnimationFrame(() => this.rescale());
+    this.currentTime = t;
+    if (this.playing) this._wallStart = performance.now() - t * 1000;
+    this.updateTime();
+  },
+  toggle() { this.playing ? this.pause() : this.play(); },
+  play() {
+    if (!this.timeline.length) return;
+    if (this.cursor >= this.timeline.length || this.currentTime >= this.duration - 1e-3) this.seekTo(0);
+    this.playing = true;
+    this._wallStart = performance.now() - this.currentTime * 1000;
+    this.setPlayIcon(true);
+    this._raf = requestAnimationFrame(() => this.tick());
+  },
+  pause() {
+    this.playing = false;
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this.setPlayIcon(false);
+  },
+  tick() {
+    if (!this.playing || !this.xterm) return;
+    const now = (performance.now() - this._wallStart) / 1000;
+    while (this.cursor < this.timeline.length && this.timeline[this.cursor].at <= now) this.apply(this.timeline[this.cursor++]);
+    this.currentTime = Math.min(now, this.duration);
+    this.updateTime();
+    if (this.cursor >= this.timeline.length) { this.currentTime = this.duration; this.updateTime(); this.pause(); return; }
+    this._raf = requestAnimationFrame(() => this.tick());
+  },
+  setPlayIcon(playing) {
+    const b = $('#rp-play');
+    if (b) b.innerHTML = playing
+      ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>'
+      : '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+  },
+  updateTime() {
+    const f = (s) => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+    const tEl = $('#rp-time'); if (tEl) tEl.textContent = `${f(this.currentTime)} / ${f(this.duration)}`;
+    const sk = $('#rp-seek'); if (sk && document.activeElement !== sk) sk.value = this.duration ? String(Math.round(this.currentTime / this.duration * 1000)) : 0;
+  },
+  exportVideo() { exportReplay(this); },
+  // 入口发现性：有录像时给回放按钮点一个小红点（飞行记录仪默默录了一堆，得让用户知道能回看）
+  async refreshHint() {
+    if (!window.fanboxRec) return;
+    const btn = $('#term-replay'); if (!btn) return;
+    try { const r = await window.fanboxRec.list(); btn.classList.toggle('has-rec', !!(r && r.items && r.items.length)); } catch { /* */ }
+  },
+};
+
+// 导出：直接对回放用的 xterm canvas 做 captureStream + MediaRecorder——
+// 录的就是播放器画面本身，和你看到的逐像素一致，零外部依赖。手动 requestFrame 保证静止段也出帧。
+async function exportReplay(p) {
+  if (!p.xterm || !p.timeline.length) { toast('先在左侧选一段录像', true); return; }
+  if (!p._canvasOk) { toast('导出需要 WebGL 渲染，当前不可用', true); return; }
+  if (!window.MediaRecorder) { toast('当前环境不支持录制导出', true); return; }
+  // 选 WebGL 渲染那块画布（另一块 xterm-link-layer 是空覆盖层）。WebGL 不保留 drawing buffer，
+  // 必须用 captureStream(fps) 的「自动模式」在合成器层面取帧——手动 requestFrame 取到的是空白。
+  const canvases = [...p._host.querySelectorAll('canvas')];
+  const srcCanvas = canvases.find((c) => { try { return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch { return false; } }) || canvases[canvases.length - 1];
+  if (!srcCanvas || !srcCanvas.width || !srcCanvas.height) { toast('找不到画布，无法导出', true); return; }
+  const cw = srcCanvas.width, ch = srcCanvas.height;
+  // WebGL 画布不能直接 drawImage（读回是空白），先 captureStream 喂给 <video>，再画进带 macOS 外框的合成画布
+  let srcStream;
+  try { srcStream = srcCanvas.captureStream(30); } catch { toast('画布捕获失败', true); return; }
+  const video = document.createElement('video');
+  video.muted = true; video.playsInline = true; video.srcObject = srcStream;
+  // 外框几何（设备像素，按宽度等比缩放），配色取录像当时的皮肤
+  const s = Math.max(0.6, cw / 900);
+  const titleH = Math.round(40 * s), pad = Math.round(44 * s), radius = Math.round(11 * s);
+  const comp = document.createElement('canvas');
+  comp.width = cw + pad * 2; comp.height = ch + titleH + pad * 2;
+  const ctx = comp.getContext('2d');
+  const theme = term.themes[p.recTheme] || term.theme();
+  const termBg = theme.background || '#0b0c0a', fg = theme.foreground || '#cccccc';
+  const lightTheme = hexLum(termBg) > 0.5;
+  const backdrop = lightTheme ? '#d6d0c4' : '#16181c';
+  const title = (p.current && p.current.cwd && baseOf(p.current.cwd)) || '终端录像';
+  const fontFam = getComputedStyle(document.documentElement).getPropertyValue('--font-display').trim() || 'sans-serif';
+  const rr = (x, y, w, h, r) => { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); };
+  const drawFrame = () => {
+    ctx.fillStyle = backdrop; ctx.fillRect(0, 0, comp.width, comp.height);
+    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,0.30)'; ctx.shadowBlur = 30 * s; ctx.shadowOffsetY = 12 * s;
+    ctx.fillStyle = termBg; rr(pad, pad, cw, titleH + ch, radius); ctx.fill(); ctx.restore();
+    ctx.save(); rr(pad, pad, cw, titleH + ch, radius); ctx.clip();
+    ctx.fillStyle = lightTheme ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.06)'; ctx.fillRect(pad, pad, cw, titleH);
+    const ly = pad + titleH / 2, lr = Math.round(6 * s); let lx = pad + Math.round(22 * s);
+    for (const col of ['#ff5f57', '#febc2e', '#28c840']) { ctx.beginPath(); ctx.fillStyle = col; ctx.arc(lx, ly, lr, 0, Math.PI * 2); ctx.fill(); lx += Math.round(20 * s); }
+    ctx.fillStyle = fg; ctx.globalAlpha = 0.68; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `${Math.round(15 * s)}px ${fontFam}`; ctx.fillText(title, pad + cw / 2, ly + 1); ctx.globalAlpha = 1;
+    try { ctx.drawImage(video, pad, pad + titleH, cw, ch); } catch { /* video 尚无帧 */ }
+    ctx.restore();
+  };
+  let framePump = 0; const pump = () => { drawFrame(); framePump = requestAnimationFrame(pump); };
+  let stream;
+  try { stream = comp.captureStream(30); } catch { toast('合成画布捕获失败', true); return; }
+  // 渲染层固定录 WebM（Electron 的 MediaRecorder 最稳的就是 vp9/webm），mp4/gif 交给主进程 ffmpeg 转
+  const mime = ['video/webm;codecs=vp9', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+  const chunks = [];
+  let mr;
+  try { mr = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10000000 }); }
+  catch { toast('无法初始化录制器', true); return; }
+  mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  const stopped = new Promise((res) => { mr.onstop = res; });
+  const btn = $('#rp-export'); const label = btn.textContent;
+  p._exporting = true; // 导出期间禁止切换/关闭，避免绑错画布产坏文件
+  btn.disabled = true;
+  try {
+    p.pause(); p.seekTo(0);
+    try { await video.play(); } catch { /* */ }
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); // 等画布稳定
+    pump(); // 开始把 video 画进外框
+    mr.start(100); // timeslice：周期性产出数据块，短录像也不丢
+    p.play();
+    // 导出是实时录屏（播一遍就是多久），进度条给用户反馈，别让人以为卡死
+    const prog = setInterval(() => { btn.textContent = '录制中 ' + Math.min(99, Math.round(p.currentTime / (p.duration || 1) * 100)) + '%'; }, 200);
+    await new Promise((res) => { const iv = setInterval(() => { if (!p.playing) { clearInterval(iv); res(); } }, 80); });
+    clearInterval(prog);
+    await new Promise((r) => setTimeout(r, 500)); // 末帧多停一拍
+    try { mr.stop(); } catch { /* */ }
+    await stopped;
+    cancelAnimationFrame(framePump);
+    try { stream.getTracks().forEach((t) => t.stop()); srcStream.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+    try { video.pause(); video.srcObject = null; } catch { /* */ }
+    if (!chunks.length) { toast('没有捕获到画面（导出需要 WebGL）', true); return; }
+    const fmt = ($('#rp-format') && $('#rp-format').value) || 'mp4';
+    btn.textContent = fmt === 'webm' ? '保存中…' : '转码中…';
+    const blob = new Blob(chunks, { type: mime });
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    const tag = (p.current && p.current.cwd && baseOf(p.current.cwd)) || 'session';
+    const name = `终端录像-${tag}-${fmtStamp()}`;
+    // 渲染层永远产 WebM，交给主进程按 fmt 用 ffmpeg 转 mp4/gif（无 ffmpeg 自动退回 webm）
+    const r = await window.fanboxRec.export(name, buf, fmt).catch(() => null);
+    if (r && r.ok) { toast('已导出 ' + baseOf(r.path) + (r.fellBack ? '（' + r.fellBack + '）' : '') + '，在访达打开'); window.fanboxRec.reveal(r.path); }
+    else { toast('导出失败' + (r && r.error ? '：' + r.error : ''), true); }
+  } finally {
+    try { cancelAnimationFrame(framePump); } catch { /* */ }
+    try { stream.getTracks().forEach((t) => t.stop()); srcStream.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+    try { video.pause(); video.srcObject = null; } catch { /* */ }
+    p._exporting = false; btn.disabled = false; btn.textContent = label;
+  }
+}
+// 简易相对亮度（判断皮肤深浅，给外框选底色）
+function hexLum(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return 0.2;
+  const n = parseInt(m[1], 16);
+  return (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+}
+function fmtStamp() {
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+}
+
 // ---------- 内嵌终端（仅桌面 app；浏览器版优雅降级）----------
 // agent「等你拍板」界面特征（claude code 2.1.x / codex 0.13x 实测文案，宁缺勿滥：
 // 不命中只是退化成「任务完成」标题，不会漏响）
@@ -2374,6 +2901,7 @@ const term = {
     if (!this.sessions.length) this.newTab();
     else { this.fitActive(); this.renderTabs(); }
     $('#btn-terminal').classList.add('active');
+    player.refreshHint(); // 有录像就给回放按钮点红点，提升发现性
     localStorage.setItem('fb_term_open', '1');
     if (!localStorage.getItem('fb_term_draghint')) { localStorage.setItem('fb_term_draghint', '1'); setTimeout(() => toast('提示：把左侧文件 / 文件夹拖进终端，即插入路径喂给 agent'), 700); }
   },
@@ -2506,7 +3034,7 @@ const term = {
       try { const r = await window.fanboxPty.cwd(id); if (r && r.ok && r.cwd) cwd = r.cwd; } catch { /* */ }
       candidate = (cwd || '').replace(/\/$/, '') + '/' + p.replace(/^\.\//, '');
     }
-    const name = p.split('/').pop();
+    const name = p.replace(/\/+$/, '').split('/').pop(); // 去掉目录结尾 / 再取 basename，否则名为空 basename 搜索失效
     // 回扫 scrollback：agent 生成文件时几乎总打印过全路径（裸文件名常常不在 cwd 下），比模糊搜索可信
     const alt = isRel ? this.scanScrollbackFor(id, name, rowHint) : '';
     // 活跃项目根（浏览目录 + 各终端项目目录）作 basename 搜索的额外根
@@ -2614,6 +3142,9 @@ const term = {
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-term').trim() || 'monospace',
       fontSize: 13, lineHeight: 1.2, cursorBlink: true, theme: this.theme(), scrollback: 5000,
       allowProposedApi: true, // unicode11 宽度 API 需要
+      // claude/codex 等 TUI 会开启鼠标上报，鼠标拖拽被程序吃掉 → 默认无法选中文字。
+      // 开这个开关后按住 Option 拖拽即可强制选中复制（iTerm/VS Code 终端同款约定）
+      macOptionClickForcesSelection: true,
       // agent 常输出按深色终端设计的 256 色/真彩（如淡蓝路径），在浅色皮肤上几乎隐形；
       // 自动把对比度不足的前景色压暗/提亮到 4.5:1（WCAG AA，VS Code 终端同款默认值）
       minimumContrastRatio: 4.5,
@@ -2656,7 +3187,7 @@ const term = {
     this.sessions.push(sess);
     this.activate(id);
     updateWatches(); // 新终端的项目目录也纳入监听
-    const r = await window.fanboxPty.spawn({ id, cwd: startDir, cols: xterm.cols, rows: xterm.rows });
+    const r = await window.fanboxPty.spawn({ id, cwd: startDir, cols: xterm.cols, rows: xterm.rows, theme: state.theme });
     if (!r.ok) { sess.dead = true; xterm.write('\r\n  \x1b[31m终端启动失败：' + (r.error || '') + '\x1b[0m\r\n'); }
     else sess.cwd = r.cwd || startDir; // 末尾 renderTabs 统一带上 cwd 重画
     xterm.onData((d) => {
@@ -2746,6 +3277,10 @@ const term = {
           }
           // 截断路径直接创建链接，避免验证失败导致无法点击
           truncated.forEach((x) => push(x.s, x.e, x.cand, x.tail));
+          // 目录候选（结尾 /）：和带扩展名的裸文件名享受同等兜底——验证通过则用精确路径，
+          // 验证失败（终端 cwd 与打印的相对路径基准不一致时常见）也保留链接，点开走 basename 搜索。
+          // 文件靠扩展名白名单兜底，目录没扩展名，全靠结尾 / 这个强信号（散文几乎不这么写）。
+          const dirCands = r2.filter((x) => x.cand.endsWith('/'));
           const finish = () => {
             // 3. 裸文件名：unicode 字符类（调研.md 能点）+ 扩展名白名单（e.g/node.js 不误报）。
             // 紧跟斜杠路径、只隔空格的裸名多半是同一带空格路径的后半段：点哪段都按完整串定位
@@ -2758,6 +3293,8 @@ const term = {
               if (prev) push(mm.index, end, t.slice(prev.s, end), t.slice(end).split(/['"`]/)[0].slice(0, 160));
               else push(mm.index, end, mm[0], '');
             }
+            // 验证未命中的目录候选再兜一刀（已被 apply 精确链接的会被 overlaps 跳过）
+            dirCands.forEach((x) => push(x.s, x.e, x.cand, x.tail));
             cb(links.length ? links : undefined);
           };
           if (!r2.length) { finish(); return; }
@@ -4008,6 +4545,11 @@ if (window.fanboxFs) {
     if (filename) recordChange(dir, String(filename));
     // 文件跟随：必须在「不是当前目录就 return」之前喂，跨目录改动才跟得上
     if (filename) followChange(dir, String(filename));
+    // 打开中的 md 编辑器若对应的磁盘文件被外部（如 agent / 命令行）改了：未脏就静默重载，脏则不动（保存时 mtime 冲突保护会拦）
+    if (filename && currentEditor) {
+      const abs = dir.replace(/\/$/, '') + '/' + String(filename);
+      if (abs === currentEditor.path && !currentEditor.isDirty()) currentEditor.reload();
+    }
     if (dir !== state.cwd || state.recentMode) return;
     // 高亮被 agent 改动的项：递归监听下 src/foo.js 归到顶层 src，并累计计数 + 记子路径供 tooltip 定位
     if (filename) {
