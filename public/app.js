@@ -324,7 +324,7 @@ function renderBreadcrumb() {
       const d = document.createElement('span');
       d.className = 'crumb-proj';
       d.style.background = `hsl(${term.hueOf(ts.cwd)} 62% 48%)`;
-      d.title = '终端「' + (ts.title || '') + '」正在这个项目里干活';
+      d.title = '终端「' + (term.displayTitle ? term.displayTitle(ts) : (ts.title || '')) + '」正在这个项目里干活';
       bc.appendChild(d);
     }
   }
@@ -2065,6 +2065,7 @@ function bindTerminalResizer() {
     else panel.style.width = target + 'px';
     target = null;
     fitNow();
+    term.renderTabs();
   };
   handle.addEventListener('mousedown', (e) => {
     dragging = true; e.preventDefault();
@@ -2307,6 +2308,7 @@ function bindEvents() {
     if (e.key === 'Meta' || e.key === 'Control') $('#term-tabs')?.classList.remove('show-idx');
   });
   window.addEventListener('blur', () => $('#term-tabs')?.classList.remove('show-idx'));
+  window.addEventListener('resize', () => { if (typeof term !== 'undefined') term.renderTabs(); });
 }
 function updateGridSizeVisibility() {
   $('#gridsize-seg').style.display = state.view === 'grid' ? '' : 'none';
@@ -2338,7 +2340,7 @@ function applyTheme(skin, rerender = true) {
 // 不命中只是退化成「任务完成」标题，不会漏响）
 const TERM_ASK_RE = /(Do you want to (proceed|continue|make this edit|allow|use this)|Would you like to proceed|Ready to code\?|created or one you trust\?|tell (Claude|Codex) what to do differently|Yes, and don't ask again|Allow Codex to (run|apply|create)|Codex wants to|[❯›][ \t]*1\.[ \t]*Yes)/;
 const term = {
-  sessions: [], seq: 0, active: null, maximized: false,
+  sessions: [], seq: 0, active: null, maximized: false, moreOpen: false,
   dock: localStorage.getItem('fb_term_dock') || 'right',
   available() { return !!(window.fanboxPty && window.Terminal && !window.__noXterm); },
   // 每套皮肤一整套手调 ANSI 主题——暗皮肤暗终端、亮皮肤亮终端，不再出现「暖纸里嵌黑块」
@@ -2370,7 +2372,7 @@ const term = {
     $('#terminal-resizer').classList.remove('hidden');
     this.applyDock();
     if (!this.sessions.length) this.newTab();
-    else this.fitActive();
+    else { this.fitActive(); this.renderTabs(); }
     $('#btn-terminal').classList.add('active');
     localStorage.setItem('fb_term_open', '1');
     if (!localStorage.getItem('fb_term_draghint')) { localStorage.setItem('fb_term_draghint', '1'); setTimeout(() => toast('提示：把左侧文件 / 文件夹拖进终端，即插入路径喂给 agent'), 700); }
@@ -2402,6 +2404,7 @@ const term = {
     }
     applyPreviewSize(); // 预览随 dock 翻转轴向
     this.fitActive();
+    this.renderTabs();
   },
   setDock(d) {
     if (this.maximized) this.toggleMax(false); // 铺满下切布局看不出任何变化，先退出铺满让分屏可见
@@ -2415,6 +2418,7 @@ const term = {
     const b = $('#term-max');
     if (b) { b.classList.toggle('on', this.maximized); b.title = this.maximized ? '还原终端' : '终端铺满'; }
     this.fitActive();
+    this.renderTabs();
   },
   // 在指定目录开终端（新标签）；浏览器版降级到系统终端。返回新 session（spawn 完成后）
   openInDir(dir) {
@@ -2562,6 +2566,24 @@ const term = {
   },
   // 项目身份色：路径稳定哈希到色相——同一项目的标签色点永远一个色，扫一眼即配对
   hueOf(p) { let h = 0; for (let i = 0; i < (p || '').length; i++) h = (h * 31 + p.charCodeAt(i)) >>> 0; return h % 360; },
+  displayTitle(s) {
+    return (s && (s.customTitle || s.title)) || 'shell';
+  },
+  async renameTab(s) {
+    if (!s) return;
+    const v = await inputDialog('重命名终端标签', s.customTitle || this.displayTitle(s), '留空恢复自动命名');
+    if (v === null) return;
+    const name = v.replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (name) {
+      s.customTitle = name;
+      toast('终端标签已重命名');
+    } else {
+      s.customTitle = '';
+      s.title = baseOf(s.cwd || s.startDir || '') || s.title || 'shell';
+      toast('已恢复自动命名');
+    }
+    this.renderTabs();
+  },
   // 标签标题跟着终端「现在」的目录走（lsof 查真实 cwd），不再停留在创建时的快照；
   // 多标签跑不同项目的 agent 时，标题才认得出谁是谁
   async refreshCwd(s, force) {
@@ -2574,7 +2596,8 @@ const term = {
     try {
       const r = await window.fanboxPty.cwd(s.id);
       if (r && r.ok && r.cwd && r.cwd !== s.cwd) {
-        s.cwd = r.cwd; s.title = baseOf(r.cwd) || s.title;
+        s.cwd = r.cwd;
+        if (!s.customTitle) s.title = baseOf(r.cwd) || s.title;
         this.renderTabs(); renderBreadcrumb(); // 面包屑的项目配对色点也跟着换
       }
     } catch { /* 取不到就保持原标题 */ }
@@ -2629,7 +2652,7 @@ const term = {
       } catch { /* 回退默认 DOM renderer */ }
     }
     if (fit) try { fit.fit(); } catch { /* */ }
-    const sess = { id, xterm, fit, host, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell' };
+    const sess = { id, xterm, fit, host, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell', customTitle: '' };
     this.sessions.push(sess);
     this.activate(id);
     updateWatches(); // 新终端的项目目录也纳入监听
@@ -2764,7 +2787,10 @@ const term = {
     sess.xterm.reset(); // 清掉死亡残留，新 shell 提示符不和旧画面叠在一起
     const r = await window.fanboxPty.spawn({ id: sess.id, cwd: sess.startDir || state.cwd, cols: sess.xterm.cols, rows: sess.xterm.rows });
     if (!r.ok) { sess.dead = true; sess.xterm.write('\x1b[31m重开失败：' + (r.error || '') + '\x1b[0m\r\n'); }
-    else sess.cwd = r.cwd || sess.startDir;
+    else {
+      sess.cwd = r.cwd || sess.startDir;
+      if (!sess.customTitle) sess.title = baseOf(sess.cwd || '') || sess.title;
+    }
   },
   activate(id) {
     this.active = id;
@@ -2855,11 +2881,13 @@ const term = {
         if (ask || dur > 1500) this.awaitGlow();
         if (ask) {
           playChime('ask'); // 非 done → 单音，和「完成」的双音区分开
-          if (!document.hasFocus() || s.id !== this.active) this.notify(s, '等待你确认 · ' + (s.title || 'shell'), this.lastReplyExcerpt(s) || (s.title || 'shell') + ' 在等你拍板');
+          const label = this.displayTitle(s);
+          if (!document.hasFocus() || s.id !== this.active) this.notify(s, '等待你确认 · ' + label, this.lastReplyExcerpt(s) || label + ' 在等你拍板');
         } else if (dur > 4000) { // 跑了一会儿的真任务完成：文件区涟漪 + 极轻提示音 + 必要时系统通知
           rippleFileArea();
           playChime('done');
-          if (!document.hasFocus() || s.id !== this.active) this.notify(s, 'agent 任务完成 · ' + (s.title || 'shell'), this.lastReplyExcerpt(s) || (s.title || 'shell') + ' 已空闲');
+          const label = this.displayTitle(s);
+          if (!document.hasFocus() || s.id !== this.active) this.notify(s, 'agent 任务完成 · ' + label, this.lastReplyExcerpt(s) || label + ' 已空闲');
         }
       });
       if (!anyBusy) { clearInterval(this._statusTimer); this._statusTimer = null; }
@@ -2895,24 +2923,135 @@ const term = {
       else if (Notification.permission !== 'denied') Notification.requestPermission().then((p) => { if (p === 'granted') fire(); });
     } catch { /* 通知不可用就算了 */ }
   },
+  tabDotState(s) {
+    return s.dead ? 'dead' : (s.status === 'busy' ? 'busy' : 'idle');
+  },
+  tabCost(s, idx) {
+    if (s.id === this.active) return 150;
+    if (follow.on && follow.sid === s.id) return 118;
+    if (s.status === 'busy' || s.unread) return 106;
+    const activeIdx = this.sessions.findIndex((x) => x.id === this.active);
+    return Math.abs(idx - activeIdx) <= 1 ? 98 : 88;
+  },
+  tabPriority(s, idx, activeIdx) {
+    if (s.id === this.active) return 1000;
+    if (follow.on && follow.sid === s.id) return 900;
+    if (s.status === 'busy') return 820;
+    if (s.unread) return 760;
+    const dist = Math.abs(idx - activeIdx);
+    if (dist === 1) return 620;
+    if (dist === 2) return 520;
+    return 120 - Math.min(dist, 20);
+  },
+  visibleTabIds(width) {
+    const ids = new Set();
+    if (!this.sessions.length) return ids;
+    const gap = Math.max(0, this.sessions.length - 1) * 4;
+    const fullCost = this.sessions.reduce((sum, s, idx) => sum + this.tabCost(s, idx), gap);
+    if (fullCost <= width) { this.sessions.forEach((s) => ids.add(s.id)); return ids; }
+
+    const activeIdx = Math.max(0, this.sessions.findIndex((x) => x.id === this.active));
+    let budget = Math.max(34, width - 68); // 给「更多」按钮留位
+    const ranked = this.sessions.map((s, idx) => ({
+      s, idx, cost: this.tabCost(s, idx), score: this.tabPriority(s, idx, activeIdx),
+    })).sort((a, b) => b.score - a.score || a.idx - b.idx);
+
+    for (const item of ranked) {
+      if (ids.has(item.s.id)) continue;
+      const mustKeep = item.s.id === this.active || (follow.on && follow.sid === item.s.id);
+      if (mustKeep || item.cost <= budget || !ids.size) {
+        ids.add(item.s.id);
+        budget -= item.cost + 4;
+      }
+    }
+    return ids;
+  },
+  bindTabOverflow() {
+    if (this._tabOverflowBound) return;
+    document.addEventListener('click', (e) => {
+      if (e.target.closest && e.target.closest('#term-tabs-more-wrap')) return;
+      this.moreOpen = false;
+      $('#term-tabs-more-wrap')?.classList.remove('open');
+    });
+    this._tabOverflowBound = true;
+  },
+  tabElement(s, idx, compact) {
+    const t = document.createElement('div');
+    const dotState = this.tabDotState(s);
+    const followed = follow.on && follow.sid === s.id; // 文件跟随正盯着这个 tab
+    t.className = 'term-tab' + (s.id === this.active ? ' active' : '') + (s.unread ? ' unread' : '') + (followed ? ' following' : '') + (compact ? ' compact' : '');
+    t.dataset.idx = String(idx + 1);
+    const dotTitle = s.dead ? '进程已退出' : (s.status === 'busy' ? 'agent 运行中' : '空闲');
+    // 终端图标按项目路径染色：同项目同色，和面包屑的配对色点呼应
+    const hue = this.hueOf(s.cwd || s.startDir);
+    const pathHint = tilde(s.cwd || s.startDir || '');
+    const label = this.displayTitle(s);
+    t.title = (followed ? '文件跟随正盯着这个终端 · 双击跳到它所在目录' : '双击：文件区跳到该终端所在目录')
+      + ' · 右键重命名'
+      + (pathHint ? '\n' + pathHint : '');
+    const eye = followed ? `<span class="tab-eye" title="文件跟随盯着它">${ic('eye', 'currentColor', 11)}</span>` : '';
+    t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${eye}${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span class="tab-title">${escapeHtml(label)}</span><span class="tab-x" title="关闭">✕</span>`;
+    t.onclick = (e) => { if (e.target.closest && e.target.closest('.tab-x')) { this.closeTab(s.id); return; } this.activate(s.id); };
+    t.ondblclick = (e) => { if (e.target.closest && e.target.closest('.tab-x')) return; this.locateCwd(); };
+    t.oncontextmenu = (e) => { e.preventDefault(); this.renameTab(s); };
+    return t;
+  },
   renderTabs() {
     const bar = $('#term-tabs');
+    const moreWrap = $('#term-tabs-more-wrap');
+    const moreBtn = $('#term-tabs-more');
+    const menu = $('#term-tabs-menu');
+    if (!bar || !moreWrap || !moreBtn || !menu) return;
+    this.bindTabOverflow();
     bar.innerHTML = '';
+    menu.innerHTML = '';
+
+    const panelW = $('#terminal-panel')?.getBoundingClientRect().width || 520;
+    const actionW = $('.term-actions')?.getBoundingClientRect().width || 260;
+    const fallbackW = Math.max(90, panelW - actionW - 96);
+    const moreW = moreWrap.classList.contains('show') ? moreWrap.getBoundingClientRect().width + 4 : 0;
+    const tabW = (bar.clientWidth || fallbackW) + moreW;
+    const visibleIds = this.visibleTabIds(tabW);
+    const hidden = this.sessions.filter((s) => !visibleIds.has(s.id));
+    const compact = hidden.length && tabW < 420;
+
     this.sessions.forEach((s, idx) => {
-      const t = document.createElement('div');
-      const dotState = s.dead ? 'dead' : (s.status === 'busy' ? 'busy' : 'idle');
-      const followed = follow.on && follow.sid === s.id; // 文件跟随正盯着这个 tab
-      t.className = 'term-tab' + (s.id === this.active ? ' active' : '') + (s.unread ? ' unread' : '') + (followed ? ' following' : '');
-      t.dataset.idx = String(idx + 1);
-      const dotTitle = s.dead ? '进程已退出' : (s.status === 'busy' ? 'agent 运行中' : '空闲');
-      // 终端图标按项目路径染色：同项目同色，和面包屑的配对色点呼应
+      if (!visibleIds.has(s.id)) return;
+      const isCompact = compact && s.id !== this.active && !(follow.on && follow.sid === s.id) && s.status !== 'busy' && !s.unread;
+      bar.appendChild(this.tabElement(s, idx, isCompact));
+    });
+
+    if (!hidden.length) {
+      this.moreOpen = false;
+      moreWrap.classList.remove('show', 'open');
+      return;
+    }
+
+    const hiddenBusy = hidden.some((s) => s.status === 'busy');
+    const hiddenUnread = hidden.some((s) => s.unread);
+    moreWrap.classList.add('show');
+    moreWrap.classList.toggle('open', !!this.moreOpen);
+    moreBtn.className = 'term-tabs-more' + (hiddenBusy ? ' busy' : '') + (hiddenUnread ? ' unread' : '');
+    moreBtn.textContent = `更多 ${hidden.length}`;
+    moreBtn.title = `还有 ${hidden.length} 个终端标签`;
+    moreBtn.onclick = (e) => { e.stopPropagation(); this.moreOpen = !this.moreOpen; this.renderTabs(); };
+    menu.onclick = (e) => e.stopPropagation();
+    hidden.forEach((s) => {
+      const idx = this.sessions.indexOf(s);
+      const dotState = this.tabDotState(s);
+      const followed = follow.on && follow.sid === s.id;
       const hue = this.hueOf(s.cwd || s.startDir);
-      t.title = followed ? '文件跟随正盯着这个终端 · 双击跳到它所在目录' : '双击：文件区跳到该终端所在目录';
-      const eye = followed ? `<span class="tab-eye" title="文件跟随盯着它">${ic('eye', 'currentColor', 11)}</span>` : '';
-      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${eye}${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span>${escapeHtml(s.title)}</span><span class="tab-x" title="关闭">✕</span>`;
-      t.onclick = (e) => { if (e.target.classList.contains('tab-x')) { this.closeTab(s.id); return; } this.activate(s.id); };
-      t.ondblclick = (e) => { if (e.target.classList.contains('tab-x')) return; this.locateCwd(); };
-      bar.appendChild(t);
+      const row = document.createElement('div');
+      row.className = 'term-menu-item' + (s.unread ? ' unread' : '') + (followed ? ' following' : '');
+      row.title = '右键重命名';
+      row.innerHTML = `<span class="tab-dot ${dotState}"></span><div class="term-menu-main"><div class="term-menu-title">${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span>${idx + 1}. ${escapeHtml(this.displayTitle(s))}</span></div><div class="term-menu-sub">${escapeHtml(tilde(s.cwd || s.startDir || ''))}</div></div><button class="term-menu-x" title="关闭">✕</button>`;
+      row.onclick = (e) => {
+        if (e.target.closest && e.target.closest('.term-menu-x')) { this.closeTab(s.id); return; }
+        this.moreOpen = false;
+        this.activate(s.id);
+      };
+      row.oncontextmenu = (e) => { e.preventDefault(); this.renameTab(s); };
+      menu.appendChild(row);
     });
   },
   retheme() { const th = this.theme(); this.sessions.forEach((s) => { s.xterm.options.theme = th; }); },
@@ -3482,7 +3621,7 @@ function setFileFollow(on, offMsg) {
     follow.sid = sid;
     const s = term.sessions.find((x) => x.id === sid);
     if (s) term.refreshCwd(s, true).catch(() => {}); // 立刻校准 cwd，scope 从第一笔就准（不靠回车后的延迟轮询）
-    follow.label = s ? (baseOf(s.cwd || s.startDir || '') || s.title || '') : '';
+    follow.label = s ? term.displayTitle(s) : '';
   } else {
     follow.sid = null; follow.label = ''; // 浏览器版无终端：维持旧口径（全跟）
   }
@@ -3834,7 +3973,7 @@ if (window.fanboxPty) {
       s.dead = true; s.status = 'dead';
       s.xterm.write('\r\n\x1b[90m[进程已退出 — 回车重开，或 ✕ 关闭]\x1b[0m\r\n');
       term.renderTabs();
-      term.notify(s, '终端已退出', (s.title || 'shell') + ' 的进程结束了');
+      term.notify(s, '终端已退出', term.displayTitle(s) + ' 的进程结束了');
     }
   });
 }
