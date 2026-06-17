@@ -2125,7 +2125,7 @@ function bindEvents() {
   $('#btn-changes').onclick = () => toggleChangesPanel();
   $('#btn-terminal').onclick = () => term.toggle();
   $('#term-claude').onclick = () => term.launchAgent('claude --dangerously-skip-permissions');
-  $('#term-codex').onclick = () => term.launchAgent('codex');
+  $('#term-codex').onclick = () => term.launchAgent('codex --yolo');
   usagePanel.bind();
   shotTray.init();
   $('#skills-entry').onclick = () => skillsView.show();
