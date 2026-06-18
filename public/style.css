@@ -84,7 +84,8 @@ body {
 [data-theme="editorial"] .grid .item.selected { background: var(--text); border-color: var(--text); }
 [data-theme="editorial"] .grid .item.selected .fname { color: var(--bg); }
 [data-theme="editorial"] .cmdk-panel,
-[data-theme="editorial"] .input-dialog { border: 2px solid var(--text); border-radius: 0; box-shadow: 10px 10px 0 rgba(10, 10, 10, 0.9); backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--bg-2); }
+[data-theme="editorial"] .input-dialog,
+[data-theme="editorial"] .shortcut-dialog { border: 2px solid var(--text); border-radius: 0; box-shadow: 10px 10px 0 rgba(10, 10, 10, 0.9); backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--bg-2); }
 /* 列表行序号：编辑式日报的「№」标号 */
 [data-theme="editorial"] .list .row:not(.list-head) { counter-increment: rowidx; }
 [data-theme="editorial"] .list { counter-reset: rowidx; }
@@ -897,6 +898,52 @@ kbd {
 .wechat-dot { position: absolute; top: 1px; right: 1px; width: 6px; height: 6px; border-radius: 50%; background: #07C160; box-shadow: 0 0 0 1.5px var(--bg-2); }
 .wechat-dot.hidden { display: none; }
 
+/* 快捷键面板 */
+.shortcut-overlay {
+  position: fixed; inset: 0; z-index: 430; display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: rgba(0,0,0,0.52); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.shortcut-dialog {
+  width: min(860px, calc(100vw - 36px)); max-height: min(760px, calc(100vh - 48px));
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow);
+}
+.shortcut-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 16px 18px 14px; border-bottom: 1px solid var(--border);
+}
+.shortcut-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.shortcut-sub { margin-top: 3px; font-size: 11px; color: var(--text-faint); }
+.shortcut-close {
+  width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-3);
+  color: var(--text-dim); cursor: pointer; font-size: 13px; flex: 0 0 auto;
+}
+.shortcut-close:hover { color: var(--text); border-color: var(--accent); }
+.shortcut-body {
+  padding: 14px 18px 18px; overflow: auto;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 26px;
+}
+.shortcut-group { min-width: 0; }
+.shortcut-group h3 {
+  margin: 0 0 8px; font-size: 12px; line-height: 1.3; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.shortcut-list { border-top: 1px solid var(--border); }
+.shortcut-row {
+  display: grid; grid-template-columns: minmax(132px, 0.78fr) 1fr; gap: 12px;
+  align-items: start; padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.shortcut-keys { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-width: 0; }
+.shortcut-keys kbd { white-space: nowrap; color: var(--text); background: var(--bg); }
+.shortcut-desc { min-width: 0; color: var(--text-dim); font-size: 12.5px; line-height: 1.5; }
+@media (max-width: 720px) {
+  .shortcut-overlay { padding: 14px; align-items: stretch; }
+  .shortcut-dialog { width: 100%; max-height: none; }
+  .shortcut-body { grid-template-columns: 1fr; gap: 16px; }
+  .shortcut-row { grid-template-columns: minmax(110px, 0.6fr) 1fr; }
+}
+
 /* 右键上下文菜单 */
 .context-menu {
   position: fixed; z-index: 70; min-width: 168px; padding: 5px;
@@ -1102,10 +1149,10 @@ body { transition: background-color 0.28s ease, color 0.28s ease; }
 .nav-list li, .crumb, .brand-name, .brand-sub, .nav-title { transition: background-color 0.28s ease, border-color 0.28s ease, color 0.28s ease; }
 
 /* 浮层双层阴影：1px 贴边描边 + 远柔光，替代单层廉价大模糊 */
-.cmdk-panel, .input-dialog, .context-menu, .guide-card, .lightbox > img {
+.cmdk-panel, .input-dialog, .shortcut-dialog, .context-menu, .guide-card, .lightbox > img {
   box-shadow: 0 0 0 0.5px rgba(0,0,0,0.12), 0 12px 40px rgba(0,0,0,0.22) !important;
 }
-[data-theme="terminal"] .cmdk-panel, [data-theme="terminal"] .input-dialog,
+[data-theme="terminal"] .cmdk-panel, [data-theme="terminal"] .input-dialog, [data-theme="terminal"] .shortcut-dialog,
 [data-theme="terminal"] .context-menu, [data-theme="terminal"] .guide-card {
   box-shadow: 0 0 0 0.5px rgba(0,0,0,0.5), 0 14px 44px rgba(0,0,0,0.5) !important;
 }
@@ -1125,7 +1172,7 @@ body { transition: background-color 0.28s ease, color 0.28s ease; }
 /* 浮层磨砂玻璃——叠在内容上时透出底下内容的模糊，真 mac app 的材质信号（CDP 可见，非依赖 OS vibrancy）*/
 .cmdk-panel { background: color-mix(in srgb, var(--bg-2) 82%, transparent); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); }
 .context-menu { background: color-mix(in srgb, var(--bg-2) 85%, transparent); -webkit-backdrop-filter: blur(20px) saturate(1.4); backdrop-filter: blur(20px) saturate(1.4); }
-.input-dialog { background: color-mix(in srgb, var(--bg-2) 85%, transparent); -webkit-backdrop-filter: blur(20px) saturate(1.4); backdrop-filter: blur(20px) saturate(1.4); }
+.input-dialog, .shortcut-dialog { background: color-mix(in srgb, var(--bg-2) 85%, transparent); -webkit-backdrop-filter: blur(20px) saturate(1.4); backdrop-filter: blur(20px) saturate(1.4); }
 
 /* 变更角标显示计数（改·N），文本由 JS 写进 data-changed */
 .item.changed::after, .row.changed::after { content: attr(data-changed); }

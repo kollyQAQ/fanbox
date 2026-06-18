@@ -244,6 +244,111 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+const SHORTCUT_GROUPS = [
+  { title: '全局', items: [
+    { keys: ['⌘?', '⌘⇧/'], desc: '打开或关闭快捷键面板' },
+    { keys: '⌘K', desc: '打开或关闭命令面板' },
+    { keys: 'Esc', desc: '关闭当前弹窗、预览或退出预览全屏' },
+    { keys: '⌘[', desc: '返回上一次浏览位置' },
+    { keys: '⌘\\', desc: '折叠或展开侧栏' },
+    { keys: '⌘⇧F', desc: '铺满当前焦点区域；已铺满时还原' },
+    { keys: '⌘R', desc: '刷新内嵌浏览器当前页面' },
+    { keys: '⌘⇧R', desc: '重新加载 FanBox 应用' },
+    { keys: '⌘Q', desc: '退出应用；仍有终端任务时会先确认' },
+  ] },
+  { title: '文件区', items: [
+    { keys: '↑ ↓ ← →', desc: '移动文件选择光标' },
+    { keys: 'Enter', desc: '打开选中文件或进入文件夹' },
+    { keys: '⌘Enter', desc: '用外部编辑器打开选中项目' },
+    { keys: 'Backspace', desc: '返回上一级目录' },
+    { keys: 'Space', desc: '收藏或取消收藏选中项目' },
+    { keys: 'F2', desc: '重命名选中项目' },
+    { keys: ['⌘Backspace', '⌘Delete'], desc: '删除选中项目' },
+    { keys: '⌘P', desc: '显示或隐藏隐藏文件' },
+  ] },
+  { title: '搜索面板', items: [
+    { keys: 'Tab', desc: '切换当前目录和全机搜索范围' },
+    { keys: '↑ ↓', desc: '移动搜索结果选择' },
+    { keys: 'Enter', desc: '打开选中结果' },
+    { keys: '⌘Enter', desc: '用外部编辑器打开选中结果' },
+    { keys: 'Esc', desc: '关闭命令面板' },
+  ] },
+  { title: '终端', items: [
+    { keys: '⌘N', desc: '打开终端或新建终端标签' },
+    { keys: '⌘1-9', desc: '切换到对应序号的终端标签' },
+    { keys: '按住 ⌘', desc: '在终端标签上显示序号提示' },
+    { keys: '⌘← / ⌘→', desc: '切换前一个或后一个终端标签' },
+    { keys: '⌘W', desc: '终端获得焦点时关闭当前终端标签' },
+    { keys: '⌘C / ⌘V', desc: '跟随当前终端焦点执行复制或粘贴' },
+  ] },
+  { title: '浏览器', items: [
+    { keys: '⌘B', desc: '打开或关闭内嵌浏览器' },
+    { keys: '⌘R', desc: '浏览器打开时刷新当前网页' },
+    { keys: '⌘W', desc: '浏览器激活时关闭当前浏览器页；不会关闭应用窗口' },
+  ] },
+  { title: '编辑与预览', items: [
+    { keys: '⌘S', desc: '在文本或 Markdown 编辑器中立即保存' },
+    { keys: '⌘F', desc: '在代码编辑器中查找' },
+    { keys: '⌘Z', desc: '图片编辑器中撤销上一步；文本编辑器按系统撤销' },
+    { keys: '⇧⌘Z', desc: '文本编辑器按系统重做' },
+    { keys: 'Esc', desc: '完成编辑、关闭预览或退出全屏预览' },
+  ] },
+];
+let shortcutHelpKeyHandler = null;
+function isShortcutHelpKey(e) {
+  return (e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === '?' || e.key === '/' || e.code === 'Slash');
+}
+function shortcutKeysHtml(keys) {
+  const list = Array.isArray(keys) ? keys : [keys];
+  return list.map((key) => `<kbd>${escapeHtml(key)}</kbd>`).join('');
+}
+function shortcutHelpBodyHtml() {
+  return SHORTCUT_GROUPS.map((group) => `
+    <section class="shortcut-group">
+      <h3>${escapeHtml(group.title)}</h3>
+      <div class="shortcut-list">
+        ${group.items.map((item) => `
+          <div class="shortcut-row">
+            <div class="shortcut-keys">${shortcutKeysHtml(item.keys)}</div>
+            <div class="shortcut-desc">${escapeHtml(item.desc)}</div>
+          </div>`).join('')}
+      </div>
+    </section>`).join('');
+}
+function closeShortcutHelp() {
+  const old = $('.shortcut-overlay');
+  if (old) old.remove();
+  if (shortcutHelpKeyHandler) {
+    document.removeEventListener('keydown', shortcutHelpKeyHandler, true);
+    shortcutHelpKeyHandler = null;
+  }
+}
+function openShortcutHelp() {
+  closeShortcutHelp();
+  const ov = document.createElement('div');
+  ov.className = 'shortcut-overlay';
+  ov.innerHTML = `<div class="shortcut-dialog" role="dialog" aria-modal="true" aria-label="快捷键">
+    <header class="shortcut-head">
+      <div><div class="shortcut-title">快捷键</div><div class="shortcut-sub">按 ⌘? 再次关闭</div></div>
+      <button class="shortcut-close" title="关闭">✕</button>
+    </header>
+    <div class="shortcut-body">${shortcutHelpBodyHtml()}</div>
+  </div>`;
+  document.body.appendChild(ov);
+  shortcutHelpKeyHandler = (e) => {
+    if (isShortcutHelpKey(e)) { e.preventDefault(); e.stopPropagation(); closeShortcutHelp(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeShortcutHelp(); }
+  };
+  document.addEventListener('keydown', shortcutHelpKeyHandler, true);
+  ov.querySelector('.shortcut-close').onclick = closeShortcutHelp;
+  ov.onclick = (e) => { if (e.target === ov) closeShortcutHelp(); };
+}
+function toggleShortcutHelp(force) {
+  const open = !!$('.shortcut-overlay');
+  const shouldOpen = force === undefined ? !open : !!force;
+  if (shouldOpen) openShortcutHelp(); else closeShortcutHelp();
+}
+
 // ---------- 未保存守卫 ----------
 // 文本/图片编辑期间，离开当前编辑器（点别的文件、跳目录、关预览）都要先确认，
 // 否则会静默丢掉改动。dirtyCheck 在进入编辑器时挂上，保存/确认离开后清空。
@@ -2642,6 +2747,7 @@ function bindEvents() {
     if (!$('#replay-overlay').classList.contains('hidden')) return; // 录像回放开着时，交给它自己的快捷键
     // 按住 ⌘/Ctrl 时终端 tab 显示序号提示
     if ((e.key === 'Meta' || e.key === 'Control') && typeof term !== 'undefined') $('#term-tabs')?.classList.add('show-idx');
+    if (!window.fanboxShortcut && isShortcutHelpKey(e)) { e.preventDefault(); toggleShortcutHelp(); return; }
     if (e.key === 'Escape' && $('#context-menu')) { closeContextMenu(); return; }
     const cmdkOpen = !$('#cmdk').classList.contains('hidden');
     const lbOpen = !!document.querySelector('.lightbox');
@@ -4833,6 +4939,7 @@ function bindUpdateNotice() {
 }
 // ⌘R 通过主进程菜单 → IPC → renderer：浏览器开着就刷 webview，否则静默
 if (window.fanboxShortcut) {
+  window.fanboxShortcut.onHelp?.(() => toggleShortcutHelp());
   window.fanboxShortcut.onReload(() => { if (window.fbBrowser && window.fbBrowser.active) window.fbBrowser.reload?.(); });
   // ⌘W：终端焦点→关终端 tab，浏览器激活→关浏览器当前页，其他→无动作（不关窗口）
   window.fanboxShortcut.onCloseTab(() => {

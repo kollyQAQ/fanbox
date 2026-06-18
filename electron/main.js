@@ -369,6 +369,8 @@ function buildMenu() {
       { role: 'selectAll', label: M('全选', 'Select All') },
     ] },
     { label: M('视图', 'View'), submenu: [
+      { label: M('快捷键', 'Keyboard Shortcuts'), accelerator: 'CmdOrCtrl+Shift+/', click: (_, w) => { if (w) w.webContents.send('shortcut:help'); } },
+      { type: 'separator' },
       { label: M('刷新页面', 'Reload Page'), accelerator: 'CmdOrCtrl+R', click: (_, w) => { if (w) w.webContents.send('shortcut:reload'); } },
       { label: M('重新加载应用', 'Reload App'), accelerator: 'CmdOrCtrl+Shift+R', click: (_, w) => { if (w) w.reload(); } }, { role: 'toggleDevTools', label: M('开发者工具', 'Developer Tools') },
       { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
