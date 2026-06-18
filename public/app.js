@@ -235,7 +235,7 @@ function escapeHtml(s) {
 
 const SHORTCUT_GROUPS = [
   { title: '全局', items: [
-    { keys: ['⌘?', '⌘⇧/'], desc: '打开或关闭快捷键面板' },
+    { keys: ['⌘/', '⌘?'], desc: '打开或关闭快捷键面板' },
     { keys: '⌘K', desc: '打开或关闭命令面板' },
     { keys: 'Esc', desc: '关闭当前弹窗、预览或退出预览全屏' },
     { keys: '⌘[', desc: '返回上一次浏览位置' },
@@ -285,7 +285,7 @@ const SHORTCUT_GROUPS = [
 ];
 let shortcutHelpKeyHandler = null;
 function isShortcutHelpKey(e) {
-  return (e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === '?' || e.key === '/' || e.code === 'Slash');
+  return (e.metaKey || e.ctrlKey) && (e.key === '/' || e.key === '?' || e.code === 'Slash');
 }
 function shortcutKeysHtml(keys) {
   const list = Array.isArray(keys) ? keys : [keys];
@@ -318,7 +318,7 @@ function openShortcutHelp() {
   ov.className = 'shortcut-overlay';
   ov.innerHTML = `<div class="shortcut-dialog" role="dialog" aria-modal="true" aria-label="快捷键">
     <header class="shortcut-head">
-      <div><div class="shortcut-title">快捷键</div><div class="shortcut-sub">按 ⌘? 再次关闭</div></div>
+      <div><div class="shortcut-title">快捷键</div><div class="shortcut-sub">按 ⌘/ 再次关闭</div></div>
       <button class="shortcut-close" title="关闭">✕</button>
     </header>
     <div class="shortcut-body">${shortcutHelpBodyHtml()}</div>
