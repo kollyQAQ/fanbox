@@ -60,9 +60,12 @@ const MIME = {
 // ---------- 工具函数 ----------
 
 function ext(name) {
-  const i = name.lastIndexOf('.');
-  if (i <= 0) return '';
-  return name.slice(i + 1).toLowerCase();
+  // 取 basename 再找点：点开头的隐藏文件（.gitignore/.env）把点后部分当扩展名，
+  // 与 TEXT_EXT 里已有的 'gitignore'/'env' 对上；否则传完整路径和传文件名结果不一致
+  const base = name.slice(name.lastIndexOf('/') + 1);
+  const i = base.lastIndexOf('.');
+  if (i < 0) return '';
+  return base.slice(i + 1).toLowerCase();
 }
 
 // 从一组文件/目录名推断项目类型（签名文件），供当前目录徽章 + 子目录浅探共用
@@ -408,7 +411,7 @@ async function recentFiles(rootPath) {
 
 async function writeTextFile(p, content, expectedMtime) {
   const file = resolvePath(p);
-  if (!TEXT_EXT.has(ext(file))) throw new Error('只支持文本类文件编辑');
+  if (kindOf(path.basename(file), false) !== 'text') throw new Error('只支持文本类文件编辑');
   if (typeof content !== 'string') throw new Error('内容非法');
   // 并发覆盖保护：打开编辑后文件被外部（agent）改过或删除，拒绝盲覆盖
   if (expectedMtime) {
@@ -842,22 +845,75 @@ async function diskUsage(p) {
 }
 
 // 压缩包内容清单：全用系统自带工具（unzip / bsdtar / gzip），保持零依赖
+// 直接读 zip 中央目录拿文件名：按「通用位标记 bit 11 = UTF-8」决定编码，没设就按 GBK 解（中文名才不乱码）。
+// 系统 unzip/bsdtar 会先把字节转码、丢失原始编码，没法事后挽救，所以自己解。zip64/异常结构返回 null 交回退。
+async function zipNames(file, MAX) {
+  let fd;
+  try {
+    fd = await fsp.open(file, 'r');
+    const { size } = await fd.stat();
+    const tailLen = Math.min(size, 65557); // EOCD 22 字节 + 最多 65535 注释
+    const tail = Buffer.alloc(tailLen);
+    await fd.read(tail, 0, tailLen, size - tailLen);
+    let eocd = -1;
+    for (let i = tail.length - 22; i >= 0; i--) { if (tail.readUInt32LE(i) === 0x06054b50) { eocd = i; break; } }
+    if (eocd < 0) return null;
+    const cdCount = tail.readUInt16LE(eocd + 10);
+    const cdSize = tail.readUInt32LE(eocd + 12);
+    const cdOffset = tail.readUInt32LE(eocd + 16);
+    if (cdOffset === 0xffffffff || cdSize === 0xffffffff) return null; // zip64，超出本简单解析
+    const cd = Buffer.alloc(cdSize);
+    await fd.read(cd, 0, cdSize, cdOffset);
+    const gbk = new TextDecoder('gbk');
+    const out = [];
+    let p = 0;
+    for (let i = 0; i < cdCount && p + 46 <= cd.length; i++) {
+      if (cd.readUInt32LE(p) !== 0x02014b50) break; // central file header 签名
+      const flag = cd.readUInt16LE(p + 8);
+      const usize = cd.readUInt32LE(p + 24);
+      const nameLen = cd.readUInt16LE(p + 28);
+      const extraLen = cd.readUInt16LE(p + 30);
+      const commentLen = cd.readUInt16LE(p + 32);
+      const nameBuf = cd.subarray(p + 46, p + 46 + nameLen);
+      let nm;
+      if (flag & 0x800) nm = nameBuf.toString('utf8');
+      else { try { nm = gbk.decode(nameBuf); } catch { nm = nameBuf.toString('utf8'); } }
+      out.push({ name: nm, size: usize });
+      p += 46 + nameLen + extraLen + commentLen;
+      if (out.length > MAX) break;
+    }
+    return out;
+  } catch { return null; } // 解析失败一律交给 unzip 兜底
+  finally { if (fd) await fd.close().catch(() => {}); }
+}
+
 async function archiveList(p) {
   const file = resolvePath(p);
   try { await fsp.stat(file); } catch { return { ok: false, error: '文件不存在' }; }
   const name = path.basename(file).toLowerCase();
+  // 压缩包里的中文名常是 GBK/CP936 且没设 UTF-8 标志位，按 UTF-8 读会乱码：
+  // 拿原始字节，先严格按 UTF-8 解，失败（多半是 GBK 中文名）再回退 GBK。
+  const decodeMaybeGbk = (buf) => {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch { try { return new TextDecoder('gbk').decode(buf); } catch { return buf.toString('latin1'); } }
+  };
   const run = (cmd, args) => new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: 15000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+    execFile(cmd, args, { timeout: 15000, maxBuffer: 8 * 1024 * 1024, encoding: 'buffer' }, (err, stdout) => (err ? reject(err) : resolve(decodeMaybeGbk(stdout))));
   });
   const MAX = 800;
   const entries = [];
   try {
     if (/\.(zip|jar)$/.test(name)) {
-      const out = await run('unzip', ['-l', '--', file]);
-      for (const line of out.split('\n')) {
-        const m = line.match(/^\s*(\d+)\s+\S+\s+\S+\s+(.+)$/);
-        if (m) entries.push({ name: m[2], size: Number(m[1]) });
-        if (entries.length > MAX) break;
+      const parsed = await zipNames(file, MAX); // 自读中央目录，中文名按 GBK/UTF-8 正确解（unzip 会乱码）
+      if (parsed) {
+        entries.push(...parsed);
+      } else { // zip64 / 异常结构本解析器够不着：回退 unzip（名字可能乱码，但至少列得出）
+        const out = await run('unzip', ['-l', '--', file]);
+        for (const line of out.split('\n')) {
+          const m = line.match(/^\s*(\d+)\s+\S+\s+\S+\s+(.+)$/);
+          if (m) entries.push({ name: m[2], size: Number(m[1]) });
+          if (entries.length > MAX) break;
+        }
       }
     } else if (/\.(tar|tgz|tbz2?|txz)$/.test(name) || /\.tar\.(gz|bz2|xz|zst)$/.test(name)) {
       const out = await run('tar', ['-tf', file]); // bsdtar 自动识别压缩格式
@@ -1029,7 +1085,7 @@ async function gitStatus(dirPath) {
 // 单文件 HEAD 版本 vs 工作区当前内容，供 Monaco DiffEditor 并排渲染
 async function gitFileDiff(p) {
   const file = resolvePath(p);
-  if (!TEXT_EXT.has(ext(file))) return { isRepo: true, diffable: false };
+  if (kindOf(path.basename(file), false) !== 'text') return { isRepo: true, diffable: false };
   const root = await gitRoot(path.dirname(file));
   if (!root) return { isRepo: false };
   const rel = path.relative(root, file).split(path.sep).join('/');
@@ -1209,12 +1265,36 @@ async function serveThumb(req, res, p, size) {
   catch { res.writeHead(415); res.end('no thumb'); } // 前端 onerror 回退矢量图标
 }
 
+// HEIC/HEIF 浏览器与 Chromium 原生不支持：用 sips 全尺寸转码成 jpeg 缓存后再吐，
+// /api/raw 和 /fs/ 都透明走这条，markdown 里的 ![](x.heic) 预览即可显示。复用缩略图那套 run/缓存/LRU。
+const HEIC_EXT = new Set(['heic', 'heif']);
+async function serveHeicAsJpeg(req, res, file, st) {
+  const key = crypto.createHash('md5').update(file + ':' + st.mtimeMs).digest('hex');
+  const cacheFile = path.join(THUMB_DIR, key + '.heic.jpg');
+  const send = () => {
+    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'max-age=604800' });
+    const rs = fs.createReadStream(cacheFile);
+    rs.on('error', () => { try { res.destroy(); } catch { /* */ } });
+    rs.pipe(res);
+  };
+  if (fs.existsSync(cacheFile)) return send();
+  let pr = thumbInflight.get(cacheFile);
+  if (!pr) {
+    pr = (async () => { await fsp.mkdir(THUMB_DIR, { recursive: true }); await run('sips', ['-s', 'format', 'jpeg', file, '--out', cacheFile]); })()
+      .finally(() => thumbInflight.delete(cacheFile));
+    thumbInflight.set(cacheFile, pr);
+  }
+  try { await pr; pruneThumbs(); send(); }
+  catch { res.writeHead(415); res.end('heic transcode failed'); } // 前端 onerror 回退矢量图标
+}
+
 // 流式返回原始文件（图片 / 视频 / pdf / 音频预览），支持 Range
 function serveRaw(req, res, filePath) {
   let file;
   try { file = resolvePath(filePath); } catch { res.writeHead(400); res.end('bad path'); return; }
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); res.end('not found'); return; }
+    if (HEIC_EXT.has(ext(file))) return serveHeicAsJpeg(req, res, file, st); // HEIC → 转码 jpeg，绕过下面的原始字节路径
     const type = MIME[ext(file)] || 'application/octet-stream';
     const onStreamErr = (rs) => rs.on('error', () => { try { res.destroy(); } catch { /* */ } });
     const range = req.headers.range;
@@ -1266,6 +1346,14 @@ async function serveHtmlPreview(req, res, filePath) {
   img, video { max-width: 100%; height: auto; }
 </style>`;
     const measureScript = '<script data-fanbox-measure>(function(){var l=0;function r(){var w=Math.max(document.documentElement.scrollWidth,document.body?document.body.scrollWidth:0);if(w&&w!==l){l=w;try{parent.postMessage({fanboxPreviewWidth:w},"*")}catch(e){}}}addEventListener("load",function(){r();setTimeout(r,300)});addEventListener("resize",r)})()</script>';
+    // 本地图片引用兜底：不同 agent 写 html 引图方式各异，http 预览（沙箱 iframe）里有两类必裂——
+    //   ① file:// 绝对 URL（http 页面禁加载 file://）；② /Users 这种裸绝对路径（解析到源站根）。
+    // 策略分两层，确保「修问题不引入新问题」：
+    //   · 主动改写：只碰 file://（http 预览里永远加载不了，改成 /fs 镜像只会帮忙、不会误伤任何能用的引用）；
+    //   · 失败兜底：其余绝对路径只在「已加载失败」时才重写到 /fs 再试一次（对本来能加载的引用零影响 → 结构性零回归）。
+    //   · 相对路径走 /fs/<目录>/ 本就正常，失败多半是文件真没了，不强行兜底。
+    // 未覆盖（注释在此说清，别让后人误以为全兜住）：<style> 块/外部 css 里的 file:// 背景图、srcset、加载后 JS 动态插入的元素。
+    const localImgScript = '<script data-fanbox-localimg>(function(){var FS="/fs";function f2fs(u){return (u&&u.slice(0,7)==="file://")?FS+u.slice(7):null;}function fix(el){if(!el.getAttribute)return;["src","href","poster"].forEach(function(a){var v=el.getAttribute(a),n=f2fs(v);if(n)el.setAttribute(a,n);});var st=el.getAttribute("style");if(st&&st.indexOf("file://")>-1)el.setAttribute("style",st.split("file://").join(FS));}function sweep(){document.querySelectorAll("[src],[href],[poster],[style]").forEach(fix);}sweep();document.addEventListener("DOMContentLoaded",sweep);document.addEventListener("error",function(e){var el=e.target;if(!el||!el.getAttribute||el.getAttribute("data-fs-tried"))return;var attr=el.tagName==="LINK"?"href":"src",v=el.getAttribute(attr);if(!v||v.charAt(0)!=="/"||v.slice(0,4)==="/fs/")return;if(/^(https?:|data:|blob:)/.test(v))return;el.setAttribute("data-fs-tried","1");el.setAttribute(attr,FS+v);},true);})()</script>';
     function injectHead(tag) {
       const headClose = html.match(/<\/head>/i);
       const headOpen = html.match(/<head[^>]*>/i);
@@ -1291,6 +1379,9 @@ async function serveHtmlPreview(req, res, filePath) {
     }
     if (!html.includes('data-fanbox-measure')) {
       injectHead(measureScript);
+    }
+    if (!html.includes('data-fanbox-localimg')) {
+      injectHead(localImgScript);
     }
     const buf = Buffer.from(html, 'utf8');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': buf.length });
@@ -2084,6 +2175,36 @@ server.on('error', (err) => {
   }
   process.exit(1);
 });
+
+// 预览专用服务器：只出 /fs/ 静态文件，绝不暴露 /api（删文件/开应用等危险接口）。
+// HTML 预览 iframe 指到这个独立端口 + 开 allow-same-origin：页面拿到「自己的」完整源
+// （localStorage/fetch 都能跑），却与 App 跨源——碰不到 App 的 DOM、localStorage 和 /api，
+// 也无法摘掉 sandbox 反向接管（那要求同源）。可读范围再收紧到主目录、挡掉点目录（.ssh/.aws/.config…），
+// 防止恶意预览页 same-origin 下读敏感文件外泄。
+const PREVIEW_PORT = PORT + 1;
+function previewPathAllowed(file) {
+  const real = path.resolve(file);
+  const home = path.resolve(HOME);
+  if (real !== home && !real.startsWith(home + path.sep)) return false; // 只放行主目录以下
+  return !real.slice(home.length).split(path.sep).some((s) => s.startsWith('.')); // 任一段是点目录/点文件 → 拒
+}
+const previewServer = http.createServer(async (req, res) => {
+  if (!hostAllowed(req)) { res.writeHead(403); res.end('forbidden host'); return; }
+  if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end('method not allowed'); return; }
+  const p = new URL(req.url, `http://localhost:${PREVIEW_PORT}`).pathname;
+  if (!p.startsWith('/fs/')) { res.writeHead(403); res.end('preview server serves /fs/ only'); return; }
+  const raw = decodeURIComponent(p.slice(3));
+  let resolved;
+  try { resolved = resolvePath(raw); } catch { res.writeHead(400); res.end('bad path'); return; }
+  if (!previewPathAllowed(resolved)) { res.writeHead(403); res.end('outside preview scope'); return; }
+  try {
+    const fsExt = (ext(raw) || '').toLowerCase();
+    if (fsExt === 'html' || fsExt === 'htm') return serveHtmlPreview(req, res, raw);
+    return serveRaw(req, res, raw);
+  } catch (err) { res.writeHead(500); res.end(String((err && err.message) || err)); }
+});
+previewServer.on('error', (err) => { console.error('  ⚠️  预览服务器启动失败：', err.message); });
+previewServer.listen(PREVIEW_PORT, '127.0.0.1', () => { console.log(`  🖼  预览源（隔离）：http://localhost:${PREVIEW_PORT}`); });
 
 server.listen(PORT, '127.0.0.1', () => {
   const link = `http://localhost:${PORT}`;
