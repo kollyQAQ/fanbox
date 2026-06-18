@@ -72,8 +72,8 @@ function createWindow() {
   });
   win.webContents.on('before-input-event', (event, input) => {
     const mod = input.meta || input.control;
-    const slash = input.code === 'Slash' || input.key === '/' || input.key === '?';
-    if (input.type === 'keyDown' && mod && slash) {
+    const slash = input.code === 'Slash' || input.key === '/';
+    if (input.type === 'keyDown' && mod && !input.shift && slash) {
       event.preventDefault();
       win.webContents.send('shortcut:help');
     }

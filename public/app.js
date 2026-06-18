@@ -246,7 +246,7 @@ function escapeHtml(s) {
 
 const SHORTCUT_GROUPS = [
   { title: '全局', items: [
-    { keys: ['⌘/', '⌘?'], desc: '打开或关闭快捷键面板' },
+    { keys: '⌘/', desc: '打开或关闭快捷键面板' },
     { keys: '⌘K', desc: '打开或关闭命令面板' },
     { keys: 'Esc', desc: '关闭当前弹窗、预览或退出预览全屏' },
     { keys: '⌘[', desc: '返回上一次浏览位置' },
@@ -296,7 +296,7 @@ const SHORTCUT_GROUPS = [
 ];
 let shortcutHelpKeyHandler = null;
 function isShortcutHelpKey(e) {
-  return (e.metaKey || e.ctrlKey) && (e.key === '/' || e.key === '?' || e.code === 'Slash');
+  return (e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === '/' || e.code === 'Slash');
 }
 function shortcutKeysHtml(keys) {
   const list = Array.isArray(keys) ? keys : [keys];
