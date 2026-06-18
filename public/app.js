@@ -244,6 +244,111 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+const SHORTCUT_GROUPS = [
+  { title: '全局', items: [
+    { keys: '⌘/', desc: '打开或关闭快捷键面板' },
+    { keys: '⌘K', desc: '打开或关闭命令面板' },
+    { keys: 'Esc', desc: '关闭当前弹窗、预览或退出预览全屏' },
+    { keys: '⌘[', desc: '返回上一次浏览位置' },
+    { keys: '⌘\\', desc: '折叠或展开侧栏' },
+    { keys: '⌘⇧F', desc: '铺满当前焦点区域；已铺满时还原' },
+    { keys: '⌘R', desc: '刷新内嵌浏览器当前页面' },
+    { keys: '⌘⇧R', desc: '重新加载 FanBox 应用' },
+    { keys: '⌘Q', desc: '退出应用；仍有终端任务时会先确认' },
+  ] },
+  { title: '文件区', items: [
+    { keys: '↑ ↓ ← →', desc: '移动文件选择光标' },
+    { keys: 'Enter', desc: '打开选中文件或进入文件夹' },
+    { keys: '⌘Enter', desc: '用外部编辑器打开选中项目' },
+    { keys: 'Backspace', desc: '返回上一级目录' },
+    { keys: 'Space', desc: '收藏或取消收藏选中项目' },
+    { keys: 'F2', desc: '重命名选中项目' },
+    { keys: ['⌘Backspace', '⌘Delete'], desc: '删除选中项目' },
+    { keys: '⌘P', desc: '显示或隐藏隐藏文件' },
+  ] },
+  { title: '搜索面板', items: [
+    { keys: 'Tab', desc: '切换当前目录和全机搜索范围' },
+    { keys: '↑ ↓', desc: '移动搜索结果选择' },
+    { keys: 'Enter', desc: '打开选中结果' },
+    { keys: '⌘Enter', desc: '用外部编辑器打开选中结果' },
+    { keys: 'Esc', desc: '关闭命令面板' },
+  ] },
+  { title: '终端', items: [
+    { keys: '⌘N', desc: '打开终端或新建终端标签' },
+    { keys: '⌘1-9', desc: '切换到对应序号的终端标签' },
+    { keys: '按住 ⌘', desc: '在终端标签上显示序号提示' },
+    { keys: '⌘← / ⌘→', desc: '切换前一个或后一个终端标签' },
+    { keys: '⌘W', desc: '终端获得焦点时关闭当前终端标签' },
+    { keys: '⌘C / ⌘V', desc: '跟随当前终端焦点执行复制或粘贴' },
+  ] },
+  { title: '浏览器', items: [
+    { keys: '⌘B', desc: '打开或关闭内嵌浏览器' },
+    { keys: '⌘R', desc: '浏览器打开时刷新当前网页' },
+    { keys: '⌘W', desc: '浏览器激活时关闭当前浏览器页；不会关闭应用窗口' },
+  ] },
+  { title: '编辑与预览', items: [
+    { keys: '⌘S', desc: '在文本或 Markdown 编辑器中立即保存' },
+    { keys: '⌘F', desc: '在代码编辑器中查找' },
+    { keys: '⌘Z', desc: '图片编辑器中撤销上一步；文本编辑器按系统撤销' },
+    { keys: '⇧⌘Z', desc: '文本编辑器按系统重做' },
+    { keys: 'Esc', desc: '完成编辑、关闭预览或退出全屏预览' },
+  ] },
+];
+let shortcutHelpKeyHandler = null;
+function isShortcutHelpKey(e) {
+  return (e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === '/' || e.code === 'Slash');
+}
+function shortcutKeysHtml(keys) {
+  const list = Array.isArray(keys) ? keys : [keys];
+  return list.map((key) => `<kbd>${escapeHtml(key)}</kbd>`).join('');
+}
+function shortcutHelpBodyHtml() {
+  return SHORTCUT_GROUPS.map((group) => `
+    <section class="shortcut-group">
+      <h3>${escapeHtml(group.title)}</h3>
+      <div class="shortcut-list">
+        ${group.items.map((item) => `
+          <div class="shortcut-row">
+            <div class="shortcut-keys">${shortcutKeysHtml(item.keys)}</div>
+            <div class="shortcut-desc">${escapeHtml(item.desc)}</div>
+          </div>`).join('')}
+      </div>
+    </section>`).join('');
+}
+function closeShortcutHelp() {
+  const old = $('.shortcut-overlay');
+  if (old) old.remove();
+  if (shortcutHelpKeyHandler) {
+    document.removeEventListener('keydown', shortcutHelpKeyHandler, true);
+    shortcutHelpKeyHandler = null;
+  }
+}
+function openShortcutHelp() {
+  closeShortcutHelp();
+  const ov = document.createElement('div');
+  ov.className = 'shortcut-overlay';
+  ov.innerHTML = `<div class="shortcut-dialog" role="dialog" aria-modal="true" aria-label="快捷键">
+    <header class="shortcut-head">
+      <div><div class="shortcut-title">快捷键</div><div class="shortcut-sub">按 ⌘/ 再次关闭</div></div>
+      <button class="shortcut-close" title="关闭">✕</button>
+    </header>
+    <div class="shortcut-body">${shortcutHelpBodyHtml()}</div>
+  </div>`;
+  document.body.appendChild(ov);
+  shortcutHelpKeyHandler = (e) => {
+    if (isShortcutHelpKey(e)) { e.preventDefault(); e.stopPropagation(); closeShortcutHelp(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeShortcutHelp(); }
+  };
+  document.addEventListener('keydown', shortcutHelpKeyHandler, true);
+  ov.querySelector('.shortcut-close').onclick = closeShortcutHelp;
+  ov.onclick = (e) => { if (e.target === ov) closeShortcutHelp(); };
+}
+function toggleShortcutHelp(force) {
+  const open = !!$('.shortcut-overlay');
+  const shouldOpen = force === undefined ? !open : !!force;
+  if (shouldOpen) openShortcutHelp(); else closeShortcutHelp();
+}
+
 // ---------- 未保存守卫 ----------
 // 文本/图片编辑期间，离开当前编辑器（点别的文件、跳目录、关预览）都要先确认，
 // 否则会静默丢掉改动。dirtyCheck 在进入编辑器时挂上，保存/确认离开后清空。
@@ -277,6 +382,7 @@ async function navigate(p, pushHistory = true) {
     if (data.error) { toast('无法打开：' + data.error, true); return; }
     if (pushHistory && state.cwd) state.history.push(state.cwd);
     state.cwd = data.path;
+    try { window.fanboxWechat && window.fanboxWechat.setCwd(state.cwd); } catch { /* 微信 ClawBot 的 agent 工作目录跟随当前项目 */ }
     state.entries = data.entries;
     state.project = data.project;
     state.breadcrumb = data.breadcrumb;
@@ -335,7 +441,7 @@ function renderBreadcrumb() {
       const d = document.createElement('span');
       d.className = 'crumb-proj';
       d.style.background = `hsl(${term.hueOf(ts.cwd)} 62% 48%)`;
-      d.title = '终端「' + (ts.title || '') + '」正在这个项目里干活';
+      d.title = '终端「' + (term.displayTitle ? term.displayTitle(ts) : (ts.title || '')) + '」正在这个项目里干活';
       bc.appendChild(d);
     }
   }
@@ -948,6 +1054,16 @@ function setPreviewMax(on) {
   const b = $('#preview-maxbtn');
   if (b) { b.innerHTML = ic(previewMax ? 'minimize' : 'maximize', 'currentColor', 15); b.dataset.tip = previewMax ? '退出全屏' : '全屏放大'; }
 }
+// ⌘⇧F：焦点跟随的铺满开关——已有铺满先还原（铺满时另一侧被藏，焦点不可能在那）；
+// 否则焦点在终端就铺终端，预览开着就铺预览，最后兜底铺终端
+function toggleFocusedMax() {
+  if (term.maximized) { term.toggleMax(false); return; }
+  if (previewMax) { setPreviewMax(false); return; }
+  const termOpen = !$('#terminal-panel').classList.contains('hidden');
+  if (termOpen && $('#terminal-panel').contains(document.activeElement)) { term.toggleMax(true); return; }
+  if (!$('#preview').classList.contains('hidden')) { setPreviewMax(true); return; }
+  if (termOpen) term.toggleMax(true);
+}
 function applyPreviewWidth() { applyPreviewSize(); } // 兼容旧调用名
 function toggleSidebar(force) {
   // 关/开侧栏前记下终端占主区的比例（仅左右分栏时）：腾出/收回的宽度按比例分给「文件区+预览」和终端，
@@ -1328,8 +1444,15 @@ async function enterEditMode(e) {
 // 离开（切文件/跳目录/关预览）由 guardDirty 的 autosaveFlush 把残余改动写掉，不弹确认框。
 async function mdEditor(e, data, mode = 'rich') {
   const body = $('#preview-body');
+  // 拖图进编辑器时，浏览器常把卡片/预览缩略图的内部 URL（localhost/api-thumb、/fs 镜像）写进文档，
+  // 而那是低清缩略图（w=160）链接，发出去就裂。这里统一还原成真实文件路径；外链 https/data: 不动。
+  const cleanImgUrls = (md) => String(md)
+    .replace(/(?:https?:\/\/localhost:\d+)?\/api\/(?:thumb|raw)\?path=([^)\s"'&]+)(?:&[^)\s"']*)?/g,
+      (m, p) => { try { return decodeURIComponent(p); } catch { return m; } })
+    .replace(/(?:https?:\/\/localhost:\d+)?\/fs\/([^)\s"']+)/g,
+      (m, s) => { try { return '/' + s.split('?')[0].split('/').filter(Boolean).map(decodeURIComponent).join('/'); } catch { return m; } });
   let baseMtime = data.mtime;
-  let content0 = data.content || ''; // canonical：磁盘原始 markdown，唯一事实源；编辑器只从它初始化
+  let content0 = cleanImgUrls(data.content || ''); // canonical：磁盘原始 markdown（顺手还原历史遗留的内部预览 URL）；唯一事实源，编辑器只从它初始化
   let getValue = null, baseline = '';
   let timer = null, paused = false;
   let forceCode = false; // 该文件 Milkdown 往返有损 → 锁源码模式，富文本按钮灰显（用户选「无损才用富文本」）
@@ -1352,7 +1475,7 @@ async function mdEditor(e, data, mode = 'rich') {
   };
   const doSave = async (force) => {
     if (!getValue || paused) return;
-    const content = getValue();
+    const content = cleanImgUrls(getValue()); // 落盘前把新拖入图片的内部预览 URL 还原成真实路径
     if (content === baseline) return;
     setStatus('保存中…');
     const r = await apiPost('/api/write', { path: e.path, content, expectedMtime: force ? 0 : baseMtime });
@@ -1384,7 +1507,7 @@ async function mdEditor(e, data, mode = 'rich') {
     if (modeBtn && !dis) modeBtn.onclick = async () => {
       await flush();
       const cur = getValue ? getValue() : content0;
-      if (cur !== baseline) content0 = cur; // 只有真编辑过才采纳编辑器的值；没改就保留磁盘原文，源码视图不被 Milkdown 规范化
+      if (cur !== baseline) content0 = cleanImgUrls(cur); // 只有真编辑过才采纳编辑器的值（顺手还原拖入图片的内部 URL）；没改就保留磁盘原文，不被 Milkdown 规范化
       render(m === 'rich' ? 'code' : 'rich');
     };
     const host = $('#ed-host');
@@ -1577,6 +1700,81 @@ const shotTray = {
   dismiss() { clearTimeout(this.timer); if (this.el) { this.el.remove(); this.el = null; } },
 };
 
+// 会话列表渲染 + 事件绑定（✎改名 / ▶续上 / 点文件直达）——memoryPanel 和 allMemoryPanel 共用。
+// close：续上/点文件前关闭所在面板的回调；dirPath：这批会话所属目录
+function renderSessionList(container, dirPath, sessions, close) {
+  if (!sessions || !sessions.length) {
+    container.innerHTML = '<div class="empty-state">这个文件夹还没有 agent 会话记录<br><br><span class="usage-sub">在这里跑过 Claude Code / Codex 之后，历史会话会出现在这里</span></div>';
+    return;
+  }
+  container.innerHTML = sessions.map((s, i) => `
+    <div class="mem-sess">
+      <div class="mem-head" data-i="${i}">
+        <span class="mem-agent${s.agent === 'codex' ? ' codex' : ''}">${s.agent === 'codex' ? '>_' : 'C'}</span>
+        <span class="mem-title">${escapeHtml(s.title || '（无标题会话）')}</span>
+        ${s.agent === 'claude' ? `<button class="ghost-btn mem-edit" data-i="${i}" title="改标题（Claude Code 里也会同步显示）">✎</button>` : ''}
+        <button class="ghost-btn mem-resume" data-i="${i}" title="在内嵌终端里接上这段会话的上下文继续">▶ 续上</button>
+      </div>
+      <div class="mem-meta">${fmtTime(s.lastT)} · ${s.userMsgs} 条消息${s.files.length ? ` · 改了 ${s.files.length} 个文件` : ''}${s.skills.length ? ' · ' + s.skills.map((k) => `<i class="mem-skill">${escapeHtml(k)}</i>`).join(' ') : ''}</div>
+      ${s.files.length ? `<div class="mem-files hidden">${s.files.map((f) => `<div class="mem-file" data-p="${escapeHtml(f)}" title="${escapeHtml(f)}">${escapeHtml(f.startsWith(dirPath + '/') ? f.slice(dirPath.length + 1) : f.replace(state.home, '~'))}</div>`).join('')}</div>` : ''}
+    </div>`).join('');
+  container.querySelectorAll('.mem-head').forEach((h) => {
+    h.onclick = (ev) => {
+      if (ev.target.closest('.mem-resume') || ev.target.closest('.mem-edit') || ev.target.closest('.mem-title-input')) return;
+      const files = h.parentElement.querySelector('.mem-files');
+      if (files) files.classList.toggle('hidden');
+    };
+  });
+  // 改标题：标题原地变输入框，Enter 保存（append custom-title 行）、Esc/失焦取消
+  container.querySelectorAll('.mem-edit').forEach((b) => {
+    b.onclick = () => {
+      const s = sessions[Number(b.dataset.i)];
+      const titleEl = b.parentElement.querySelector('.mem-title');
+      const input = document.createElement('input');
+      input.className = 'mem-title-input';
+      input.value = s.title || '';
+      titleEl.replaceWith(input);
+      input.focus(); input.select();
+      let done = false, saving = false;
+      const restore = (text) => {
+        if (done) return; done = true;
+        const span = document.createElement('span');
+        span.className = 'mem-title';
+        span.textContent = text || '（无标题会话）';
+        input.replaceWith(span);
+      };
+      input.onblur = () => { if (!saving) restore(s.title); };
+      input.onkeydown = async (ke) => {
+        if (ke.key === 'Escape') { restore(s.title); return; }
+        if (ke.key !== 'Enter') return;
+        const v = input.value.trim();
+        if (!v || v === s.title) { restore(s.title); return; }
+        saving = true;
+        const r = await apiPost('/api/session-title', { path: dirPath, id: s.id, title: v });
+        if (r.ok) { s.title = r.title; restore(s.title); toast('标题已更新'); }
+        else { saving = false; restore(s.title); toast(r.error || '改标题失败', true); }
+      };
+    };
+  });
+  container.querySelectorAll('.mem-resume').forEach((b) => {
+    b.onclick = () => {
+      const s = sessions[Number(b.dataset.i)];
+      const cmd = s.agent === 'codex' ? `codex resume ${s.id}` : `claude --dangerously-skip-permissions --resume ${s.id}`;
+      if (close) close();
+      term.runInDir(dirPath, cmd, '已在终端续上会话');
+    };
+  });
+  container.querySelectorAll('.mem-file').forEach((f) => {
+    f.onclick = async () => {
+      const p = f.dataset.p;
+      if (close) close();
+      await navigate(dirOf(p));
+      const e = state.entries.find((x) => x.path === p);
+      if (e) { state.selected = p; openPreview(e); renderFiles(); }
+    };
+  });
+}
+
 // 项目记忆：这个文件夹里 AI 干过什么——历史会话考古，可展开改过的文件，可一键续上
 async function memoryPanel(dirPath) {
   const old = $('.mem-overlay'); if (old) old.remove();
@@ -1586,50 +1784,57 @@ async function memoryPanel(dirPath) {
     <div class="input-title">项目记忆 · ${escapeHtml(dirPath.replace(state.home, '~'))}</div>
     <div class="mem-body"><div class="cmdk-loading">翻会话日志中…</div></div></div>`;
   document.body.appendChild(ov);
-  const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
+  // Esc 在标题编辑框里只取消编辑（input 自己处理），不关弹窗
+  const onKey = (ev) => { if (ev.key === 'Escape' && !(ev.target.closest && ev.target.closest('.mem-title-input'))) { ev.preventDefault(); close(); } };
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
   ov.onclick = (ev) => { if (ev.target === ov) close(); };
   document.addEventListener('keydown', onKey, true);
   const d = await api('/api/project-memory?path=' + encodeURIComponent(dirPath));
-  const body = ov.querySelector('.mem-body');
-  if (!d.ok || !d.sessions.length) {
-    body.innerHTML = '<div class="empty-state">这个文件夹还没有 agent 会话记录<br><br><span class="usage-sub">在这里跑过 Claude Code / Codex 之后，历史会话会出现在这里</span></div>';
+  renderSessionList(ov.querySelector('.mem-body'), dirPath, d.ok ? d.sessions : [], close);
+}
+
+// 全局项目记忆：左栏全部 agent 项目（顺序同侧栏 / 按最近活跃排），选一个右栏展示该目录会话
+async function allMemoryPanel() {
+  const old = $('.mem-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.className = 'input-overlay mem-overlay';
+  ov.innerHTML = `<div class="input-dialog allmem-dialog">
+    <div class="input-title">项目记忆 · 全部 Agent 项目</div>
+    <div class="allmem-body">
+      <div class="allmem-projs"><div class="cmdk-loading">扫描项目中…</div></div>
+      <div class="allmem-sessions mem-body"><div class="empty-state usage-sub">选左侧一个项目查看它的会话</div></div>
+    </div></div>`;
+  document.body.appendChild(ov);
+  const onKey = (ev) => { if (ev.key === 'Escape' && !(ev.target.closest && ev.target.closest('.mem-title-input'))) { ev.preventDefault(); close(); } };
+  const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+  ov.onclick = (ev) => { if (ev.target === ov) close(); };
+  document.addEventListener('keydown', onKey, true);
+
+  const projsEl = ov.querySelector('.allmem-projs');
+  const sessEl = ov.querySelector('.allmem-sessions');
+  const data = await api('/api/agent-projects').catch(() => null);
+  const projects = (data && data.projects) || [];
+  if (!projects.length) {
+    projsEl.innerHTML = '<div class="empty-state usage-sub">用 Claude Code / Codex 跑过的项目会出现在这里</div>';
+    sessEl.innerHTML = '';
     return;
   }
-  body.innerHTML = d.sessions.map((s, i) => `
-    <div class="mem-sess">
-      <div class="mem-head" data-i="${i}">
-        <span class="mem-agent${s.agent === 'codex' ? ' codex' : ''}">${s.agent === 'codex' ? '>_' : 'C'}</span>
-        <span class="mem-title">${escapeHtml(s.title || '（无标题会话）')}</span>
-        <button class="ghost-btn mem-resume" data-i="${i}" title="在内嵌终端里接上这段会话的上下文继续">▶ 续上</button>
-      </div>
-      <div class="mem-meta">${fmtTime(s.lastT)} · ${s.userMsgs} 条消息${s.files.length ? ` · 改了 ${s.files.length} 个文件` : ''}${s.skills.length ? ' · ' + s.skills.map((k) => `<i class="mem-skill">${escapeHtml(k)}</i>`).join(' ') : ''}</div>
-      ${s.files.length ? `<div class="mem-files hidden">${s.files.map((f) => `<div class="mem-file" data-p="${escapeHtml(f)}" title="${escapeHtml(f)}">${escapeHtml(f.startsWith(dirPath + '/') ? f.slice(dirPath.length + 1) : f.replace(state.home, '~'))}</div>`).join('')}</div>` : ''}
+  const selectProj = async (i) => {
+    projsEl.querySelectorAll('.allmem-proj').forEach((el, j) => el.classList.toggle('on', j === i));
+    sessEl.innerHTML = '<div class="cmdk-loading">翻会话日志中…</div>';
+    const dirPath = projects[i].path;
+    const d = await api('/api/project-memory?path=' + encodeURIComponent(dirPath)).catch(() => null);
+    renderSessionList(sessEl, dirPath, d && d.ok ? d.sessions : [], close);
+  };
+  projsEl.innerHTML = projects.map((pj, i) => `
+    <div class="allmem-proj" data-i="${i}" title="${escapeHtml(pj.path)}">
+      <span class="allmem-proj-name">${escapeHtml(pj.name)}</span>
+      <span class="allmem-proj-meta">${pj.agents.map((a) => `<i class="agent-dot ${a}" title="${a}"></i>`).join('')}${agoShort(pj.lastActive)}</span>
     </div>`).join('');
-  body.querySelectorAll('.mem-head').forEach((h) => {
-    h.onclick = (ev) => {
-      if (ev.target.closest('.mem-resume')) return;
-      const files = h.parentElement.querySelector('.mem-files');
-      if (files) files.classList.toggle('hidden');
-    };
+  projsEl.querySelectorAll('.allmem-proj').forEach((el) => {
+    el.onclick = () => selectProj(Number(el.dataset.i));
   });
-  body.querySelectorAll('.mem-resume').forEach((b) => {
-    b.onclick = () => {
-      const s = d.sessions[Number(b.dataset.i)];
-      const cmd = s.agent === 'codex' ? `codex resume ${s.id}` : `claude --dangerously-skip-permissions --resume ${s.id}`;
-      close();
-      term.runInDir(dirPath, cmd, '已在终端续上会话');
-    };
-  });
-  body.querySelectorAll('.mem-file').forEach((f) => {
-    f.onclick = async () => {
-      const p = f.dataset.p;
-      close();
-      await navigate(dirOf(p));
-      const e = state.entries.find((x) => x.path === p);
-      if (e) { state.selected = p; openPreview(e); renderFiles(); }
-    };
-  });
+  selectProj(0); // 默认选第一个（最近活跃的）
 }
 
 // AI 整理：一键在内嵌终端拉起交互式 agent（claude/codex）对话式整理。
@@ -2058,6 +2263,7 @@ function bindTerminalResizer() {
     else panel.style.width = target + 'px';
     target = null;
     fitNow();
+    term.renderTabs();
   };
   handle.addEventListener('mousedown', (e) => {
     dragging = true; e.preventDefault();
@@ -2099,100 +2305,286 @@ function bindTerminalResizer() {
   });
 }
 
-// ---------- 微信 ClawBot：扫码把微信接到本机 OpenClaw（→ Claude Code / Codex），点图标看对话 ----------
-const wechatPanel = {
-  ov: null, offQr: null, offConn: null, pollTimer: null, onKey: null,
+// ---------- 微信 ClawBot：终端内的 IM 界面（设计方向 A）。桌面输入直连本机 claude/codex，可选连手机微信遥控 ----------
+const wechatView = {
+  offMsg: null, offQr: null, offConn: null, offExpired: null, offPower: null, onKey: null, onDoc: null,
+  target: 'codex', targets: [], connected: false, cwdName: '', menuOpen: false,
+  connState: 'unknown', stayAwake: false, platform: '',
+  el() { return $('#wechat-view'); },
+  shown() { const e = this.el(); return e && !e.classList.contains('hidden'); },
+  toggle() { this.shown() ? this.close() : this.open(); },
   async open() {
     if (!window.fanboxWechat) { toast('微信连接需在 FanBox 桌面版使用', true); return; }
-    if (this.ov) return;
-    const ov = document.createElement('div');
-    ov.className = 'input-overlay';
-    ov.innerHTML = `<div class="input-dialog wechat-dialog">
-      <div class="input-title">微信 ClawBot <span class="wx-sub">用微信驱动本机的 Claude Code / Codex</span></div>
-      <div class="wx-body"><div class="wx-loading">检测环境…</div></div>
-      <div class="input-actions"><button class="ghost-btn" data-act="close">关闭</button></div></div>`;
-    document.body.appendChild(ov);
-    this.ov = ov;
-    const close = () => this.close();
-    ov.querySelector('[data-act=close]').onclick = close;
-    ov.onclick = (ev) => { if (ev.target === ov) close(); };
-    this.onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
+    if (!term.available()) { toast('需要桌面版的内嵌终端', true); return; }
+    if ($('#terminal-panel').classList.contains('hidden')) term.open(); // 这界面活在终端里
+    try { window.fanboxWechat.setCwd(state.cwd); } catch { /* */ }
+    this.renderShell();
+    this.el().classList.remove('hidden');
+    this.onKey = (ev) => {
+      if (ev.key !== 'Escape' || !this.shown()) return;
+      if (this.menuOpen) { ev.preventDefault(); this.closeMenu(); return; }
+      const scan = this.el().querySelector('#wx-scan');
+      if (scan && !scan.classList.contains('hidden')) { ev.preventDefault(); this.teardownScan(); scan.classList.add('hidden'); return; }
+      ev.preventDefault(); this.close();
+    };
     document.addEventListener('keydown', this.onKey, true);
+    this.offMsg = window.fanboxWechat.onMessage(() => this.loadChat());
+    // 连接失效（轮询/探活发现 token 掉了）→ 立刻翻红 + 弹重连横幅，不让用户对着死连接干瞪眼
+    this.offExpired = window.fanboxWechat.onExpired ? window.fanboxWechat.onExpired(() => this.setConn('expired')) : null;
+    // 免密规则丢失等导致后端强制关掉「不待机」→ 同步开关 UI
+    this.offPower = window.fanboxWechat.onPower ? window.fanboxWechat.onPower((m) => { this.stayAwake = !!(m && m.stayAwake); this.syncAwake(); }) : null;
+    this.loadPower();
     await this.detect();
   },
-  body() { return this.ov && this.ov.querySelector('.wx-body'); },
+  close() {
+    this.teardown();
+    if (this.onKey) { document.removeEventListener('keydown', this.onKey, true); this.onKey = null; }
+    if (this.onDoc) { document.removeEventListener('click', this.onDoc, true); this.onDoc = null; }
+    const e = this.el(); if (e) { e.classList.add('hidden'); e.innerHTML = ''; }
+  },
+  teardown() {
+    if (this.offMsg) { this.offMsg(); this.offMsg = null; }
+    if (this.offExpired) { this.offExpired(); this.offExpired = null; }
+    if (this.offPower) { this.offPower(); this.offPower = null; }
+    this.teardownScan();
+    this.menuOpen = false;
+  },
+  teardownScan() {
+    if (this.offQr) { this.offQr(); this.offQr = null; }
+    if (this.offConn) { this.offConn(); this.offConn = null; }
+    try { window.fanboxWechat && window.fanboxWechat.cancel(); } catch { /* */ }
+  },
+  renderShell() {
+    const e = this.el();
+    e.innerHTML = `<div class="wx-bar">
+        <span class="wx-dot off" id="wx-dot"></span>
+        <span class="wx-name">微信 ClawBot</span>
+        <span class="wx-status" id="wx-status"></span>
+        <span class="wx-spacer"></span>
+        <button class="wx-awake hidden" id="wx-awake">🌙 离开不待机</button>
+        <span class="wx-brain" id="wx-brain">连到 Codex <span class="caret">▾</span></span>
+        <button class="wx-x" id="wx-close" title="收起（回到终端）">✕</button>
+        <div class="wx-menu hidden" id="wx-menu"></div>
+      </div>
+      <div class="wx-body">
+        <div class="wx-reconnect hidden" id="wx-reconnect">
+          <span class="wx-reconnect-msg" id="wx-reconnect-msg"></span>
+          <span class="wx-spacer"></span>
+          <button class="wx-reconnect-btn" id="wx-reconnect-btn">重新连接</button>
+        </div>
+        <div class="wx-ctx" id="wx-ctx">
+          <div class="wx-meter" id="wx-meter" title="当前对话上下文用量：越满越贵越慢，满了会自动整理"><span class="wx-meter-fill" id="wx-meter-fill"></span></div>
+          <span class="wx-meter-txt" id="wx-meter-txt"></span>
+          <span class="wx-spacer"></span>
+          <button class="wx-ctx-btn" id="wx-compact" title="整理对话：把要点存进记忆，换个轻量上下文接着聊">整理</button>
+          <button class="wx-ctx-btn" id="wx-new" title="新对话：归档当前，开个全新的（靠长期记忆续）">新对话</button>
+        </div>
+        <div class="wx-chat" id="wx-chat"></div>
+        <div class="wx-scan hidden" id="wx-scan"></div>
+        <div class="wx-viewonly">仅查看手机微信与本机大脑的对话记录，回复请在手机微信进行</div>
+      </div>`;
+    e.querySelector('#wx-close').onclick = () => this.close();
+    e.querySelector('#wx-brain').onclick = (ev) => { ev.stopPropagation(); this.toggleMenu(); };
+    e.querySelector('#wx-awake').onclick = () => this.toggleAwake();
+    e.querySelector('#wx-compact').onclick = (ev) => this.runCtxAction(ev.currentTarget, '整理中…', () => window.fanboxWechat.compact(), '已整理上下文');
+    e.querySelector('#wx-new').onclick = (ev) => this.runCtxAction(ev.currentTarget, '处理中…', () => window.fanboxWechat.newConversation(), '已开启新对话');
+    e.querySelector('#wx-reconnect-btn').onclick = () => this.connectPhone();
+    this.syncAwake();
+    this.onDoc = (ev) => { if (this.menuOpen && !ev.target.closest('#wx-menu') && !ev.target.closest('#wx-brain')) this.closeMenu(); };
+    document.addEventListener('click', this.onDoc, true);
+  },
   async detect() {
-    const env = await window.fanboxWechat.env().catch(() => ({ installed: false }));
-    if (!this.body()) return;
-    wechatPanel.syncDot(!!env.connected);
-    if (!env.installed) this.renderNeedInstall();
-    else if (env.connected) this.renderConnected(env);
-    else this.renderScan();
-  },
-  syncDot(on) { const d = $('#wechat-dot'); if (d) d.classList.toggle('hidden', !on); },
-  renderNeedInstall() {
-    const b = this.body(); if (!b) return;
-    b.innerHTML = `<div class="wx-step">
-      <p>还没装 OpenClaw（微信 ClawBot 的本机中转）。在终端跑这条装好后再回来：</p>
-      <pre class="wx-cmd">npm i -g openclaw</pre>
-      <button class="primary" data-act="recheck">装好了，重新检测</button></div>`;
-    b.querySelector('[data-act=recheck]').onclick = () => this.detect();
-  },
-  renderScan() {
-    this.teardownLogin();
-    const b = this.body(); if (!b) return;
-    b.innerHTML = `<div class="wx-scan"><div class="wx-qr"><div class="wx-loading">生成二维码…</div></div>
-      <p class="wx-hint">用手机微信「扫一扫」，在手机上点「连接」。<br>连上后这里会自动显示对话内容。</p></div>`;
-    this.offQr = window.fanboxWechat.onQr((m) => {
-      const qr = this.ov && this.ov.querySelector('.wx-qr'); if (!qr) return;
-      qr.innerHTML = m.dataUrl ? `<img class="wx-qr-img" src="${m.dataUrl}" alt="微信登录二维码">`
-        : `<p class="wx-hint">二维码生成失败，可在手机打开此链接：<br>${escapeHtml(m.url)}</p>`;
-    });
-    this.offConn = window.fanboxWechat.onConnected(async () => {
-      const env = await window.fanboxWechat.env().catch(() => ({ connected: true }));
-      this.renderConnected(env);
-    });
-    window.fanboxWechat.login().then((r) => {
-      if (r && !r.ok) { const qr = this.ov && this.ov.querySelector('.wx-qr'); if (qr) qr.innerHTML = `<p class="wx-hint">${escapeHtml(r.error || '启动登录失败')}</p>`; }
-    });
-  },
-  async renderConnected(env) {
-    this.teardownLogin();
-    this.syncDot(true);
-    const b = this.body(); if (!b) return;
-    const who = (env && env.agentModel) ? env.agentModel : '本机 agent';
-    b.innerHTML = `<div class="wx-conn">
-      <div class="wx-conn-bar"><span class="wx-on">● 已连接</span><span class="wx-who">微信 → ${escapeHtml(who)}</span><button class="ghost-btn wx-sm" data-act="disc">断开</button></div>
-      <div class="wx-chat"><div class="wx-loading">读取对话…</div></div></div>`;
-    b.querySelector('[data-act=disc]').onclick = async () => { await window.fanboxWechat.disconnect(); this.syncDot(false); this.renderScan(); };
+    this.setConn('checking'); // 打开就给「检测中」即时反馈，别让用户盯着一个不知真假的绿点
+    const env = await window.fanboxWechat.env().catch(() => ({}));
+    this.targets = (env.targets && env.targets.length) ? env.targets : [{ id: 'codex', label: 'Codex', available: true }, { id: 'claude', label: 'Claude Code', available: true }];
+    if (env.target) this.target = env.target;
+    this.cwdName = env.cwdName || '';
+    this.persona = env.persona || '';
+    this.personaDefault = env.personaDefault || '';
+    this.syncBar();
     await this.loadChat();
-    clearInterval(this.pollTimer);
-    this.pollTimer = setInterval(() => this.loadChat(), 4000); // 准实时刷新对话
+    // 主动探活，拿到权威状态（connected / expired / unreachable / disconnected）
+    const r = window.fanboxWechat.check ? await window.fanboxWechat.check().catch(() => ({})) : {};
+    this.setConn(r.state || (env.connected ? 'connected' : 'disconnected'));
+  },
+  label(id) { const t = this.targets.find((x) => x.id === id); return t ? t.label : (id === 'claude' ? 'Claude Code' : 'Codex'); },
+  // 连接状态机：连接监测的唯一出口，统一刷点/状态文案/重连横幅/顶栏绿点
+  setConn(state) { this.connState = state; this.connected = (state === 'connected'); this.applyConn(); },
+  applyConn() {
+    const e = this.el(); if (!e) return;
+    const map = {
+      checking: { cls: 'checking', text: '检测连接中…' },
+      connected: { cls: '', text: '已连接' },
+      expired: { cls: 'bad', text: '连接已失效' },
+      unreachable: { cls: 'bad', text: '连接异常' },
+      disconnected: { cls: 'off', text: '未连接' },
+      unknown: { cls: 'off', text: '' },
+    };
+    const m = map[this.connState] || map.unknown;
+    const dot = e.querySelector('#wx-dot'); if (dot) dot.className = ('wx-dot ' + m.cls).trim();
+    const status = e.querySelector('#wx-status'); if (status) status.textContent = m.text;
+    // 失效 / 未连 → 醒目重连横幅（直接弹二维码）；检测中 / 已连 / 临时异常不打扰
+    const rc = e.querySelector('#wx-reconnect');
+    if (rc) {
+      const show = this.connState === 'expired' || this.connState === 'disconnected';
+      rc.classList.toggle('hidden', !show);
+      if (show) {
+        const msg = rc.querySelector('#wx-reconnect-msg'); const btn = rc.querySelector('#wx-reconnect-btn');
+        if (msg) msg.textContent = this.connState === 'expired' ? '微信连接已失效，需要重新扫码' : '还没连接手机微信';
+        if (btn) btn.textContent = this.connState === 'expired' ? '重新连接' : '连接手机微信';
+      }
+    }
+    this.syncDot(this.connState === 'connected');
+  },
+  syncBar() {
+    const e = this.el(); if (!e) return;
+    const brain = e.querySelector('#wx-brain'); if (brain) brain.innerHTML = `连到 ${escapeHtml(this.label(this.target))} <span class="caret">${this.menuOpen ? '▴' : '▾'}</span>`;
+    this.applyConn();
+  },
+  // 「离开不待机」开关
+  async loadPower() {
+    if (!window.fanboxWechat.powerState) return;
+    const p = await window.fanboxWechat.powerState().catch(() => ({}));
+    this.platform = p.platform || (window.fanboxEnv && window.fanboxEnv.platform) || '';
+    this.stayAwake = !!p.stayAwake;
+    this.syncAwake();
+  },
+  syncAwake() {
+    const e = this.el(); if (!e) return;
+    const btn = e.querySelector('#wx-awake'); if (!btn) return;
+    const mac = (this.platform || (window.fanboxEnv && window.fanboxEnv.platform)) === 'darwin';
+    btn.classList.toggle('hidden', !mac); // 仅 macOS 支持（pmset 禁休眠）
+    btn.classList.toggle('on', this.stayAwake);
+    btn.textContent = this.stayAwake ? '🌙 离开不待机 · 开' : '🌙 离开不待机';
+    btn.title = this.stayAwake
+      ? '已开启：微信连着时，合盖 / 息屏也不休眠，离开电脑也能远程操控。点击关闭'
+      : '开启后离开电脑也能用微信遥控：合盖 / 息屏不休眠（断开微信自动恢复）';
+  },
+  async toggleAwake() {
+    const r = await window.fanboxWechat.setStayAwake(!this.stayAwake).catch(() => ({}));
+    if (r && r.ok) { this.stayAwake = !!r.on; this.syncAwake(); toast(this.stayAwake ? '已开启 · 离开也能用微信遥控本机' : '已关闭 · 恢复正常休眠'); }
+    else { this.stayAwake = !!(r && r.on); this.syncAwake(); if (r && r.error && r.error !== 'cancelled' && r.error !== 'setup-cancelled') toast('开启失败：' + r.error, true); }
+  },
+  toggleMenu() { this.menuOpen ? this.closeMenu() : this.openMenu(); },
+  openMenu() {
+    this.menuOpen = true;
+    const e = this.el(); const menu = e.querySelector('#wx-menu');
+    const item = (id) => {
+      const t = this.targets.find((x) => x.id === id) || { available: true };
+      const cur = id === this.target;
+      return `<div class="wx-mi ${cur ? 'cur' : ''}" data-pick="${id}"${t.available ? '' : ' disabled'}>${escapeHtml(this.label(id))}${cur ? '<span class="ck">✓</span>' : ''}</div>`;
+    };
+    menu.innerHTML = item('claude') + item('codex') + `<div class="wx-sep"></div>` +
+      `<div class="wx-mi" data-act="persona">自定义人格…</div>` +
+      (this.connected ? `<div class="wx-mi danger" data-act="disc">断开手机微信</div>` : `<div class="wx-mi" data-act="conn">连接手机微信…</div>`);
+    menu.querySelectorAll('[data-pick]').forEach((b) => { b.onclick = () => this.pickTarget(b.dataset.pick); });
+    const conn = menu.querySelector('[data-act=conn]'); if (conn) conn.onclick = () => { this.closeMenu(); this.connectPhone(); };
+    const disc = menu.querySelector('[data-act=disc]'); if (disc) disc.onclick = () => { this.closeMenu(); this.disconnectPhone(); };
+    const pers = menu.querySelector('[data-act=persona]'); if (pers) pers.onclick = () => { this.closeMenu(); this.editPersona(); };
+    menu.classList.remove('hidden');
+    e.querySelector('#wx-brain').classList.add('open');
+    this.syncBar();
+  },
+  closeMenu() {
+    this.menuOpen = false; const e = this.el(); if (!e) return;
+    const m = e.querySelector('#wx-menu'); if (m) m.classList.add('hidden');
+    const b = e.querySelector('#wx-brain'); if (b) b.classList.remove('open');
+    this.syncBar();
+  },
+  async pickTarget(id) {
+    const t = this.targets.find((x) => x.id === id);
+    if (t && !t.available) { toast(`本机未检测到 ${this.label(id)}`, true); return; }
+    this.target = id; this.closeMenu();
+    await window.fanboxWechat.setTarget(id).catch(() => {});
+    this.syncBar(); this.loadChat();
   },
   async loadChat() {
-    const chat = this.ov && this.ov.querySelector('.wx-chat'); if (!chat) return;
-    const s = await window.fanboxWechat.sessions().catch(() => ({ items: [] }));
-    const sid = s.items && s.items[0] && s.items[0].id;
-    if (!sid) { chat.innerHTML = `<p class="wx-hint">还没有对话。去微信里给「微信ClawBot」发条消息试试。</p>`; return; }
-    const t = await window.fanboxWechat.transcript(sid).catch(() => ({ msgs: [] }));
-    const msgs = t.msgs || [];
-    if (!msgs.length) { chat.innerHTML = `<p class="wx-hint">还没有对话内容。</p>`; return; }
-    const last = msgs[msgs.length - 1];
-    const sig = msgs.length + ':' + (last.text || '').slice(0, 24);
-    if (chat.dataset.sig === sig) return; // 内容没变就不重渲染，别打断滚动
-    const atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
-    chat.innerHTML = msgs.map((m) => `<div class="wx-msg ${m.role === 'user' ? 'me' : 'bot'}">${escapeHtml(m.text)}</div>`).join('');
-    chat.dataset.sig = sig;
-    if (atBottom) chat.scrollTop = chat.scrollHeight;
+    const e = this.el(); const chat = e && e.querySelector('#wx-chat'); if (!chat) return;
+    const r = await window.fanboxWechat.conversation().catch(() => ({ messages: [] }));
+    const msgs = r.messages || [];
+    this.updateMeter(r.tokens, r.budget);
+    if (!msgs.length) {
+      chat.innerHTML = `<div class="wx-empty">还没有对话。<br>点右上「连到 ${escapeHtml(this.label(this.target))} ▾ → 连接手机微信」，<br>用手机微信遥控本机的 <b>${escapeHtml(this.label(this.target))}</b>，对话记录会显示在这里。</div>`;
+      return;
+    }
+    chat.innerHTML = msgs.map((m) => this.bubble(m)).join('');
+    chat.scrollTop = chat.scrollHeight;
   },
-  teardownLogin() { if (this.offQr) { this.offQr(); this.offQr = null; } if (this.offConn) { this.offConn(); this.offConn = null; } },
-  close() {
-    this.teardownLogin();
-    clearInterval(this.pollTimer); this.pollTimer = null;
-    try { window.fanboxWechat && window.fanboxWechat.cancel(); } catch { /* */ }
-    if (this.onKey) { document.removeEventListener('keydown', this.onKey, true); this.onKey = null; }
-    if (this.ov) { this.ov.remove(); this.ov = null; }
+  // 上下文用量进度条：满了越贵越慢，≥80% 转红提醒（会自动整理）
+  updateMeter(tokens, budget) {
+    const e = this.el(); if (!e) return;
+    tokens = tokens || 0; budget = budget || 120000;
+    const pct = Math.min(100, Math.round((tokens / budget) * 100));
+    const fill = e.querySelector('#wx-meter-fill'); const txt = e.querySelector('#wx-meter-txt');
+    if (fill) { fill.style.width = pct + '%'; fill.classList.toggle('hot', pct >= 80); }
+    if (txt) txt.textContent = tokens ? `${Math.round(tokens / 1000)}k / ${Math.round(budget / 1000)}k` : '';
   },
+  // 整理/新对话共用：禁用按钮 + 改文案跑（flush 要一次模型调用，几秒），完事 toast + 刷新
+  async runCtxAction(btn, busyText, fn, okText) {
+    if (btn.disabled) return;
+    const old = btn.textContent; btn.disabled = true; btn.textContent = busyText;
+    try { await fn(); toast(okText); } catch { toast('操作失败', true); }
+    btn.disabled = false; btn.textContent = old; this.loadChat();
+  },
+  bubble(m) {
+    if (m.role === 'system') return `<div class="wx-sys">${escapeHtml(m.text)}</div>`; // 分隔线/系统提示居中
+    const me = m.role === 'user';
+    const av = me ? '花' : (this.target === 'claude' ? 'C' : 'CX');
+    // bot 回复渲染 markdown（手机大脑常回 **加粗**/列表/`代码`）；user 保持纯文本转义
+    const text = me ? escapeHtml(m.text) : this.mdBody(m.text);
+    // 用户发来的图片：用 /api/raw 直接读本机收件箱里的原图，点击走全局 lightbox 放大
+    const imgs = (m.images || []).map((p) =>
+      `<img class="wx-img" src="/api/raw?path=${encodeURIComponent(p)}" loading="lazy" alt="图片" onclick="lightbox(this.dataset.path)" data-path="${escapeHtml(p)}">`
+    ).join('');
+    const body = imgs ? imgs + (m.text ? `<div class="wx-cap">${text}</div>` : '') : text;
+    return `<div class="wx-row ${me ? 'me' : 'bot'}"><div class="wx-av ${me ? 'me' : 'bot'}">${av}</div><div class="wx-bub${me ? '' : ' md'}">${body}</div></div>`;
+  },
+  mdBody(text) {
+    try { if (window.marked && !window.__noMarked) return window.marked.parse(String(text || ''), { breaks: true, gfm: true }); } catch { /* 退回纯文本 */ }
+    return escapeHtml(text).replace(/\n/g, '<br>');
+  },
+  connectPhone() {
+    const e = this.el(); const scan = e.querySelector('#wx-scan');
+    scan.innerHTML = `<div class="wx-qr" id="wx-qr"><div class="wx-loading">生成二维码…</div></div>
+      <div class="wx-scan-lead">用手机微信扫一扫</div>
+      <div class="wx-scan-sub">连上后，微信就能遥控本机的 ${escapeHtml(this.label(this.target))} —— 看代码、跑测试、改 bug，回手机上一句话就行。</div>
+      <div class="wx-scan-close" id="wx-scan-close">取消</div>`;
+    scan.classList.remove('hidden');
+    e.querySelector('#wx-scan-close').onclick = () => { this.teardownScan(); scan.classList.add('hidden'); };
+    this.offQr = window.fanboxWechat.onQr((m) => {
+      const qr = this.el() && this.el().querySelector('#wx-qr'); if (!qr) return;
+      if (m.expired) { qr.innerHTML = `<div class="wx-loading">二维码过期，请重试</div>`; return; }
+      qr.innerHTML = m.dataUrl ? `<img src="${m.dataUrl}" alt="二维码">` : `<div class="wx-loading">${escapeHtml(m.content || '二维码生成失败')}</div>`;
+    });
+    this.offConn = window.fanboxWechat.onConnected(async () => { this.teardownScan(); scan.classList.add('hidden'); this.setConn('connected'); await this.detect(); toast('微信已连接'); });
+    window.fanboxWechat.login().then((r) => { if (r && !r.ok) { const qr = this.el() && this.el().querySelector('#wx-qr'); if (qr) qr.innerHTML = `<div class="wx-loading">${escapeHtml(r.error || '登录失败')}</div>`; } });
+  },
+  // 自定义微信 bot 人格：复用 scan 覆盖层做一个编辑面板
+  editPersona() {
+    const e = this.el(); const scan = e.querySelector('#wx-scan');
+    scan.innerHTML = `<div class="wx-persona">
+        <div class="wx-persona-title">微信 bot 人格</div>
+        <div class="wx-persona-sub">这段会作为行为指令注入。手机上回复啰嗦时，让它更简洁。</div>
+        <textarea class="wx-persona-ta" id="wx-persona-ta" rows="6" placeholder="例如：用中文、简洁、适合手机看…">${escapeHtml(this.persona || '')}</textarea>
+        <div class="wx-persona-btns">
+          <span class="wx-scan-close" id="wx-persona-reset">恢复默认</span>
+          <span class="wx-spacer"></span>
+          <span class="wx-scan-close" id="wx-persona-cancel">取消</span>
+          <button class="wx-send" id="wx-persona-save">保存</button>
+        </div>
+      </div>`;
+    scan.classList.remove('hidden');
+    const ta = scan.querySelector('#wx-persona-ta');
+    scan.querySelector('#wx-persona-reset').onclick = () => { ta.value = this.personaDefault || ''; };
+    scan.querySelector('#wx-persona-cancel').onclick = () => { scan.classList.add('hidden'); };
+    scan.querySelector('#wx-persona-save').onclick = async () => {
+      const r = await window.fanboxWechat.setPersona(ta.value).catch(() => ({}));
+      this.persona = (r && r.persona) || ta.value;
+      scan.classList.add('hidden'); toast('人格已更新');
+    };
+  },
+  async disconnectPhone() { await window.fanboxWechat.disconnect().catch(() => {}); this.setConn('disconnected'); toast('已断开手机微信'); },
+  syncDot(on) { const d = $('#wechat-dot'); if (d) d.classList.toggle('hidden', !on); const btn = $('#term-wechat'); if (btn) btn.classList.toggle('on', on); },
 };
 
 // ---------- 事件绑定 ----------
@@ -2211,16 +2603,17 @@ function bindEvents() {
   $('#cmdk-trigger').onclick = () => cmdk.open();
   $('#btn-recent').onclick = showRecent;
   $('#btn-changes').onclick = () => toggleChangesPanel();
-  $('#btn-wechat').onclick = () => wechatPanel.open();
-  // 启动时点一下连接状态，连着就给图标点个绿点（不挡初始化）
-  if (window.fanboxWechat) window.fanboxWechat.env().then((e) => wechatPanel.syncDot(!!(e && e.connected))).catch(() => {});
+  $('#term-wechat').onclick = () => wechatView.toggle();
+  // 启动时点一下连接状态，连着就给终端里的微信按钮点绿点（不挡初始化）
+  if (window.fanboxWechat) window.fanboxWechat.env().then((e) => wechatView.syncDot(!!(e && e.connected))).catch(() => {});
   $('#btn-terminal').onclick = () => term.toggle();
-  $('#term-claude').onclick = () => term.launchAgent('claude --dangerously-skip-permissions');
-  $('#term-codex').onclick = () => term.launchAgent('codex');
+  $('#term-claude').onclick = () => { wechatView.close(); term.launchAgent('claude --dangerously-skip-permissions'); };
+  $('#term-codex').onclick = () => { wechatView.close(); term.launchAgent('codex --yolo'); };
   usagePanel.bind();
   shotTray.init();
   $('#skills-entry').onclick = () => skillsView.show();
-  $('#term-newtab').onclick = () => term.newTab();
+  $('#allmem-entry').onclick = (ev) => { ev.stopPropagation(); allMemoryPanel(); };
+  $('#term-newtab').onclick = () => { wechatView.close(); term.newTab(); };
   $('#term-max').onclick = () => term.toggleMax();
   // 双击终端顶栏空白处（避开标签/按钮/输入框）= 铺满终端：agent 交互窗口最重要，给它一键放到最大
   $('.term-head').addEventListener('dblclick', (ev) => {
@@ -2236,7 +2629,7 @@ function bindEvents() {
   $('#term-close').onclick = () => term.close();
   $('#btn-sidebar').onclick = () => toggleSidebar();
   $('#file-follow').onclick = () => setFileFollow(!follow.on);
-  $('#term-locate').onclick = () => term.locateCwd();
+  // 定位文件按钮已撤（双击终端 tab 即可定位，见 term.locateCwd / renderTabs 的 ondblclick）
   // 终端随窗口尺寸变化重排，避免 TUI 错位
   window.addEventListener('resize', () => term.fitActive());
   if (window.ResizeObserver) new ResizeObserver(() => term.fitActive()).observe($('#xterm-host'));
@@ -2352,6 +2745,9 @@ function bindEvents() {
   }, true);
   document.addEventListener('keydown', (e) => {
     if (!$('#replay-overlay').classList.contains('hidden')) return; // 录像回放开着时，交给它自己的快捷键
+    // 按住 ⌘/Ctrl 时终端 tab 显示序号提示
+    if ((e.key === 'Meta' || e.key === 'Control') && typeof term !== 'undefined') $('#term-tabs')?.classList.add('show-idx');
+    if (!window.fanboxShortcut && isShortcutHelpKey(e)) { e.preventDefault(); toggleShortcutHelp(); return; }
     if (e.key === 'Escape' && $('#context-menu')) { closeContextMenu(); return; }
     const cmdkOpen = !$('#cmdk').classList.contains('hidden');
     const lbOpen = !!document.querySelector('.lightbox');
@@ -2373,7 +2769,31 @@ function bindEvents() {
     if (e.key === 'Escape' && inInput) { document.activeElement.blur(); return; }
     if (e.key === 'Escape' && !$('#preview').classList.contains('hidden')) { closePreview(); return; }
     if ((e.metaKey || e.ctrlKey) && e.key === '[') { e.preventDefault(); goBack(); return; }
-    if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !inInput) { e.preventDefault(); toggleSidebar(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); toggleSidebar(); return; }
+    // ⌘B 打开/关闭浏览器模块（browser.js 暴露 window.fbBrowser）
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !e.shiftKey) { e.preventDefault(); if (window.fbBrowser) window.fbBrowser.toggle(); return; }
+    // ⌘N 新建终端标签
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'n' || e.key === 'N') && !e.shiftKey) { e.preventDefault(); if (typeof term !== 'undefined') { if ($('#terminal-panel').classList.contains('hidden')) term.open(); else term.newTab(); } return; }
+    // ⌘P 切换隐藏文件显示
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'p' || e.key === 'P') && !e.shiftKey) { e.preventDefault(); state.showHidden = !state.showHidden; localStorage.setItem('fb_hidden', state.showHidden ? '1' : '0'); const cb = $('#toggle-hidden'); if (cb) cb.checked = state.showHidden; renderFiles(); return; }
+    // ⌘⇧F 铺满要在 inInput 拦截之前：终端焦点落在 xterm 的 textarea 上，正是主要使用场景
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); toggleFocusedMax(); return; }
+    // ⌘1-9 切换终端标签（焦点无关,全局生效）
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key >= '1' && e.key <= '9') {
+      const idx = Number(e.key) - 1;
+      if (typeof term !== 'undefined' && term.sessions[idx]) { e.preventDefault(); if ($('#terminal-panel').classList.contains('hidden')) term.open(); term.activate(term.sessions[idx].id); return; }
+    }
+    // ⌘←/→ 切换前/后终端标签（焦点在终端区域时）
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && typeof term !== 'undefined' && term.sessions.length > 1 && $('#terminal-panel').contains(document.activeElement)) {
+      e.preventDefault();
+      const ci = term.sessions.findIndex((x) => x.id === term.active);
+      const ni = e.key === 'ArrowLeft' ? (ci - 1 + term.sessions.length) % term.sessions.length : (ci + 1) % term.sessions.length;
+      term.activate(term.sessions[ni].id); return;
+    }
+    // ⌘W 关闭当前终端标签（焦点在终端区域时）
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'w' || e.key === 'W') && typeof term !== 'undefined' && term.active && $('#terminal-panel').contains(document.activeElement)) {
+      e.preventDefault(); term.closeTab(term.active); return;
+    }
     if (inInput) return;
     // 主区键盘导航
     if (e.key === 'ArrowDown') { e.preventDefault(); moveCursor(state.cols); }
@@ -2386,6 +2806,11 @@ function bindEvents() {
     else if (e.key === ' ') { e.preventDefault(); const it = state.visible[state.cursor]; if (it) toggleFav(it); }
     else if (e.key === 'F2') { e.preventDefault(); const it = state.visible[state.cursor]; if (it) doRename(it); }
   });
+  document.addEventListener('keyup', (e) => {
+    if (e.key === 'Meta' || e.key === 'Control') $('#term-tabs')?.classList.remove('show-idx');
+  });
+  window.addEventListener('blur', () => $('#term-tabs')?.classList.remove('show-idx'));
+  window.addEventListener('resize', () => { if (typeof term !== 'undefined') term.renderTabs(); });
 }
 function updateGridSizeVisibility() {
   $('#gridsize-seg').style.display = state.view === 'grid' ? '' : 'none';
@@ -2746,7 +3171,7 @@ function fmtStamp() {
 // 不命中只是退化成「任务完成」标题，不会漏响）
 const TERM_ASK_RE = /(Do you want to (proceed|continue|make this edit|allow|use this)|Would you like to proceed|Ready to code\?|created or one you trust\?|tell (Claude|Codex) what to do differently|Yes, and don't ask again|Allow Codex to (run|apply|create)|Codex wants to|[❯›][ \t]*1\.[ \t]*Yes)/;
 const term = {
-  sessions: [], seq: 0, active: null, maximized: false,
+  sessions: [], seq: 0, active: null, maximized: false, moreOpen: false,
   dock: localStorage.getItem('fb_term_dock') || 'right',
   available() { return !!(window.fanboxPty && window.Terminal && !window.__noXterm); },
   // 每套皮肤一整套手调 ANSI 主题——暗皮肤暗终端、亮皮肤亮终端，不再出现「暖纸里嵌黑块」
@@ -2778,7 +3203,7 @@ const term = {
     $('#terminal-resizer').classList.remove('hidden');
     this.applyDock();
     if (!this.sessions.length) this.newTab();
-    else this.fitActive();
+    else { this.fitActive(); this.renderTabs(); }
     $('#btn-terminal').classList.add('active');
     player.refreshHint(); // 有录像就给回放按钮点红点，提升发现性
     localStorage.setItem('fb_term_open', '1');
@@ -2786,6 +3211,7 @@ const term = {
   },
   close() {
     if (this.maximized) this.toggleMax(false); // 铺满状态下收起终端，term-max 不清会把文件区一起藏没
+    if (typeof wechatView !== 'undefined' && wechatView.shown()) wechatView.close(); // 收起终端时一并关掉微信界面，停掉后台轮询
     $('#terminal-panel').classList.add('hidden');
     $('#terminal-resizer').classList.add('hidden');
     $('#main-body').classList.remove('fm-squeezed'); // 终端收起后文件区必须回来
@@ -2811,6 +3237,7 @@ const term = {
     }
     applyPreviewSize(); // 预览随 dock 翻转轴向
     this.fitActive();
+    this.renderTabs();
   },
   setDock(d) {
     if (this.maximized) this.toggleMax(false); // 铺满下切布局看不出任何变化，先退出铺满让分屏可见
@@ -2824,6 +3251,7 @@ const term = {
     const b = $('#term-max');
     if (b) { b.classList.toggle('on', this.maximized); b.title = this.maximized ? '还原终端' : '终端铺满'; }
     this.fitActive();
+    this.renderTabs();
   },
   // 在指定目录开终端（新标签）；浏览器版降级到系统终端。返回新 session（spawn 完成后）
   openInDir(dir) {
@@ -2971,6 +3399,24 @@ const term = {
   },
   // 项目身份色：路径稳定哈希到色相——同一项目的标签色点永远一个色，扫一眼即配对
   hueOf(p) { let h = 0; for (let i = 0; i < (p || '').length; i++) h = (h * 31 + p.charCodeAt(i)) >>> 0; return h % 360; },
+  displayTitle(s) {
+    return (s && (s.customTitle || s.title)) || 'shell';
+  },
+  async renameTab(s) {
+    if (!s) return;
+    const v = await inputDialog('重命名终端标签', s.customTitle || this.displayTitle(s), '留空恢复自动命名');
+    if (v === null) return;
+    const name = v.replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (name) {
+      s.customTitle = name;
+      toast('终端标签已重命名');
+    } else {
+      s.customTitle = '';
+      s.title = baseOf(s.cwd || s.startDir || '') || s.title || 'shell';
+      toast('已恢复自动命名');
+    }
+    this.renderTabs();
+  },
   // 标签标题跟着终端「现在」的目录走（lsof 查真实 cwd），不再停留在创建时的快照；
   // 多标签跑不同项目的 agent 时，标题才认得出谁是谁
   async refreshCwd(s, force) {
@@ -2983,7 +3429,8 @@ const term = {
     try {
       const r = await window.fanboxPty.cwd(s.id);
       if (r && r.ok && r.cwd && r.cwd !== s.cwd) {
-        s.cwd = r.cwd; s.title = baseOf(r.cwd) || s.title;
+        s.cwd = r.cwd;
+        if (!s.customTitle) s.title = baseOf(r.cwd) || s.title;
         this.renderTabs(); renderBreadcrumb(); // 面包屑的项目配对色点也跟着换
       }
     } catch { /* 取不到就保持原标题 */ }
@@ -3041,7 +3488,7 @@ const term = {
       } catch { /* 回退默认 DOM renderer */ }
     }
     if (fit) try { fit.fit(); } catch { /* */ }
-    const sess = { id, xterm, fit, host, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell' };
+    const sess = { id, xterm, fit, host, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell', customTitle: '' };
     this.sessions.push(sess);
     this.activate(id);
     updateWatches(); // 新终端的项目目录也纳入监听
@@ -3160,14 +3607,14 @@ const term = {
           const cwd0 = (sess0 && (sess0.cwd || sess0.startDir)) || state.cwd || '';
           // 验证结果按 (cwd, cand, tail) 缓存：provideLinks 在鼠标移动时反复触发，别反复打接口
           this._vCache = this._vCache || new Map();
-          const need = r2.filter((x) => !this._vCache.has(cwd0 + ' ' + x.cand + ' ' + x.tail));
+          const need = r2.filter((x) => !this._vCache.has(cwd0 + '\0' + x.cand + '\0' + x.tail));
           const apply = () => {
-            r2.forEach((x) => { if (this._vCache.get(cwd0 + ' ' + x.cand + ' ' + x.tail)) push(x.s, x.e, x.cand, x.tail); });
+            r2.forEach((x) => { if (this._vCache.get(cwd0 + '\0' + x.cand + '\0' + x.tail)) push(x.s, x.e, x.cand, x.tail); });
             finish();
           };
           if (!need.length) { apply(); return; }
           apiPost('/api/term-verify', { cwd: cwd0, items: need.map((x) => ({ cand: x.cand, tail: x.tail })) }).then((res) => {
-            need.forEach((x, i) => this._vCache.set(cwd0 + ' ' + x.cand + ' ' + x.tail, !!(res.results && res.results[i])));
+            need.forEach((x, i) => this._vCache.set(cwd0 + '\0' + x.cand + '\0' + x.tail, !!(res.results && res.results[i])));
             if (this._vCache.size > 600) { for (const k of this._vCache.keys()) { this._vCache.delete(k); if (this._vCache.size <= 400) break; } }
             apply();
           }).catch(() => finish()); // 验证不可用：宁可不划线，不要误标
@@ -3182,7 +3629,10 @@ const term = {
     sess.xterm.reset(); // 清掉死亡残留，新 shell 提示符不和旧画面叠在一起
     const r = await window.fanboxPty.spawn({ id: sess.id, cwd: sess.startDir || state.cwd, cols: sess.xterm.cols, rows: sess.xterm.rows });
     if (!r.ok) { sess.dead = true; sess.xterm.write('\x1b[31m重开失败：' + (r.error || '') + '\x1b[0m\r\n'); }
-    else sess.cwd = r.cwd || sess.startDir;
+    else {
+      sess.cwd = r.cwd || sess.startDir;
+      if (!sess.customTitle) sess.title = baseOf(sess.cwd || '') || sess.title;
+    }
   },
   activate(id) {
     this.active = id;
@@ -3273,11 +3723,13 @@ const term = {
         if (ask || dur > 1500) this.awaitGlow();
         if (ask) {
           playChime('ask'); // 非 done → 单音，和「完成」的双音区分开
-          if (!document.hasFocus() || s.id !== this.active) this.notify(s, '等待你确认 · ' + (s.title || 'shell'), this.lastReplyExcerpt(s) || (s.title || 'shell') + ' 在等你拍板');
+          const label = this.displayTitle(s);
+          if (!document.hasFocus() || s.id !== this.active) this.notify(s, '等待你确认 · ' + label, this.lastReplyExcerpt(s) || label + ' 在等你拍板');
         } else if (dur > 4000) { // 跑了一会儿的真任务完成：文件区涟漪 + 极轻提示音 + 必要时系统通知
           rippleFileArea();
           playChime('done');
-          if (!document.hasFocus() || s.id !== this.active) this.notify(s, 'agent 任务完成 · ' + (s.title || 'shell'), this.lastReplyExcerpt(s) || (s.title || 'shell') + ' 已空闲');
+          const label = this.displayTitle(s);
+          if (!document.hasFocus() || s.id !== this.active) this.notify(s, 'agent 任务完成 · ' + label, this.lastReplyExcerpt(s) || label + ' 已空闲');
         }
       });
       if (!anyBusy) { clearInterval(this._statusTimer); this._statusTimer = null; }
@@ -3313,23 +3765,135 @@ const term = {
       else if (Notification.permission !== 'denied') Notification.requestPermission().then((p) => { if (p === 'granted') fire(); });
     } catch { /* 通知不可用就算了 */ }
   },
+  tabDotState(s) {
+    return s.dead ? 'dead' : (s.status === 'busy' ? 'busy' : 'idle');
+  },
+  tabCost(s, idx) {
+    if (s.id === this.active) return 150;
+    if (follow.on && follow.sid === s.id) return 118;
+    if (s.status === 'busy' || s.unread) return 106;
+    const activeIdx = this.sessions.findIndex((x) => x.id === this.active);
+    return Math.abs(idx - activeIdx) <= 1 ? 98 : 88;
+  },
+  tabPriority(s, idx, activeIdx) {
+    if (s.id === this.active) return 1000;
+    if (follow.on && follow.sid === s.id) return 900;
+    if (s.status === 'busy') return 820;
+    if (s.unread) return 760;
+    const dist = Math.abs(idx - activeIdx);
+    if (dist === 1) return 620;
+    if (dist === 2) return 520;
+    return 120 - Math.min(dist, 20);
+  },
+  visibleTabIds(width) {
+    const ids = new Set();
+    if (!this.sessions.length) return ids;
+    const gap = Math.max(0, this.sessions.length - 1) * 4;
+    const fullCost = this.sessions.reduce((sum, s, idx) => sum + this.tabCost(s, idx), gap);
+    if (fullCost <= width) { this.sessions.forEach((s) => ids.add(s.id)); return ids; }
+
+    const activeIdx = Math.max(0, this.sessions.findIndex((x) => x.id === this.active));
+    let budget = Math.max(34, width - 68); // 给「更多」按钮留位
+    const ranked = this.sessions.map((s, idx) => ({
+      s, idx, cost: this.tabCost(s, idx), score: this.tabPriority(s, idx, activeIdx),
+    })).sort((a, b) => b.score - a.score || a.idx - b.idx);
+
+    for (const item of ranked) {
+      if (ids.has(item.s.id)) continue;
+      const mustKeep = item.s.id === this.active || (follow.on && follow.sid === item.s.id);
+      if (mustKeep || item.cost <= budget || !ids.size) {
+        ids.add(item.s.id);
+        budget -= item.cost + 4;
+      }
+    }
+    return ids;
+  },
+  bindTabOverflow() {
+    if (this._tabOverflowBound) return;
+    document.addEventListener('click', (e) => {
+      if (e.target.closest && e.target.closest('#term-tabs-more-wrap')) return;
+      this.moreOpen = false;
+      $('#term-tabs-more-wrap')?.classList.remove('open');
+    });
+    this._tabOverflowBound = true;
+  },
+  tabElement(s, idx, compact) {
+    const t = document.createElement('div');
+    const dotState = this.tabDotState(s);
+    const followed = follow.on && follow.sid === s.id; // 文件跟随正盯着这个 tab
+    t.className = 'term-tab' + (s.id === this.active ? ' active' : '') + (s.unread ? ' unread' : '') + (followed ? ' following' : '') + (compact ? ' compact' : '');
+    t.dataset.idx = String(idx + 1);
+    const dotTitle = s.dead ? '进程已退出' : (s.status === 'busy' ? 'agent 运行中' : '空闲');
+    // 终端图标按项目路径染色：同项目同色，和面包屑的配对色点呼应
+    const hue = this.hueOf(s.cwd || s.startDir);
+    const pathHint = tilde(s.cwd || s.startDir || '');
+    const label = this.displayTitle(s);
+    t.title = (followed ? '文件跟随正盯着这个终端 · 双击跳到它所在目录' : '双击：文件区跳到该终端所在目录')
+      + ' · 右键重命名'
+      + (pathHint ? '\n' + pathHint : '');
+    const eye = followed ? `<span class="tab-eye" title="文件跟随盯着它">${ic('eye', 'currentColor', 11)}</span>` : '';
+    t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${eye}${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span class="tab-title">${escapeHtml(label)}</span><span class="tab-x" title="关闭">✕</span>`;
+    t.onclick = (e) => { if (e.target.closest && e.target.closest('.tab-x')) { this.closeTab(s.id); return; } this.activate(s.id); };
+    t.ondblclick = (e) => { if (e.target.closest && e.target.closest('.tab-x')) return; this.locateCwd(); };
+    t.oncontextmenu = (e) => { e.preventDefault(); this.renameTab(s); };
+    return t;
+  },
   renderTabs() {
     const bar = $('#term-tabs');
+    const moreWrap = $('#term-tabs-more-wrap');
+    const moreBtn = $('#term-tabs-more');
+    const menu = $('#term-tabs-menu');
+    if (!bar || !moreWrap || !moreBtn || !menu) return;
+    this.bindTabOverflow();
     bar.innerHTML = '';
-    this.sessions.forEach((s) => {
-      const t = document.createElement('div');
-      const dotState = s.dead ? 'dead' : (s.status === 'busy' ? 'busy' : 'idle');
-      const followed = follow.on && follow.sid === s.id; // 文件跟随正盯着这个 tab
-      t.className = 'term-tab' + (s.id === this.active ? ' active' : '') + (s.unread ? ' unread' : '') + (followed ? ' following' : '');
-      const dotTitle = s.dead ? '进程已退出' : (s.status === 'busy' ? 'agent 运行中' : '空闲');
-      // 终端图标按项目路径染色：同项目同色，和面包屑的配对色点呼应
+    menu.innerHTML = '';
+
+    const panelW = $('#terminal-panel')?.getBoundingClientRect().width || 520;
+    const actionW = $('.term-actions')?.getBoundingClientRect().width || 260;
+    const fallbackW = Math.max(90, panelW - actionW - 96);
+    const moreW = moreWrap.classList.contains('show') ? moreWrap.getBoundingClientRect().width + 4 : 0;
+    const tabW = (bar.clientWidth || fallbackW) + moreW;
+    const visibleIds = this.visibleTabIds(tabW);
+    const hidden = this.sessions.filter((s) => !visibleIds.has(s.id));
+    const compact = hidden.length && tabW < 420;
+
+    this.sessions.forEach((s, idx) => {
+      if (!visibleIds.has(s.id)) return;
+      const isCompact = compact && s.id !== this.active && !(follow.on && follow.sid === s.id) && s.status !== 'busy' && !s.unread;
+      bar.appendChild(this.tabElement(s, idx, isCompact));
+    });
+
+    if (!hidden.length) {
+      this.moreOpen = false;
+      moreWrap.classList.remove('show', 'open');
+      return;
+    }
+
+    const hiddenBusy = hidden.some((s) => s.status === 'busy');
+    const hiddenUnread = hidden.some((s) => s.unread);
+    moreWrap.classList.add('show');
+    moreWrap.classList.toggle('open', !!this.moreOpen);
+    moreBtn.className = 'term-tabs-more' + (hiddenBusy ? ' busy' : '') + (hiddenUnread ? ' unread' : '');
+    moreBtn.textContent = `更多 ${hidden.length}`;
+    moreBtn.title = `还有 ${hidden.length} 个终端标签`;
+    moreBtn.onclick = (e) => { e.stopPropagation(); this.moreOpen = !this.moreOpen; this.renderTabs(); };
+    menu.onclick = (e) => e.stopPropagation();
+    hidden.forEach((s) => {
+      const idx = this.sessions.indexOf(s);
+      const dotState = this.tabDotState(s);
+      const followed = follow.on && follow.sid === s.id;
       const hue = this.hueOf(s.cwd || s.startDir);
-      t.title = followed ? '文件跟随正盯着这个终端 · 双击跳到它所在目录' : '双击：文件区跳到该终端所在目录';
-      const eye = followed ? `<span class="tab-eye" title="文件跟随盯着它">${ic('eye', 'currentColor', 11)}</span>` : '';
-      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${eye}${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span>${escapeHtml(s.title)}</span><span class="tab-x" title="关闭">✕</span>`;
-      t.onclick = (e) => { if (e.target.classList.contains('tab-x')) { this.closeTab(s.id); return; } this.activate(s.id); };
-      t.ondblclick = (e) => { if (e.target.classList.contains('tab-x')) return; this.locateCwd(); };
-      bar.appendChild(t);
+      const row = document.createElement('div');
+      row.className = 'term-menu-item' + (s.unread ? ' unread' : '') + (followed ? ' following' : '');
+      row.title = '右键重命名';
+      row.innerHTML = `<span class="tab-dot ${dotState}"></span><div class="term-menu-main"><div class="term-menu-title">${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span>${idx + 1}. ${escapeHtml(this.displayTitle(s))}</span></div><div class="term-menu-sub">${escapeHtml(tilde(s.cwd || s.startDir || ''))}</div></div><button class="term-menu-x" title="关闭">✕</button>`;
+      row.onclick = (e) => {
+        if (e.target.closest && e.target.closest('.term-menu-x')) { this.closeTab(s.id); return; }
+        this.moreOpen = false;
+        this.activate(s.id);
+      };
+      row.oncontextmenu = (e) => { e.preventDefault(); this.renameTab(s); };
+      menu.appendChild(row);
     });
   },
   retheme() { const th = this.theme(); this.sessions.forEach((s) => { s.xterm.options.theme = th; }); },
@@ -3899,7 +4463,7 @@ function setFileFollow(on, offMsg) {
     follow.sid = sid;
     const s = term.sessions.find((x) => x.id === sid);
     if (s) term.refreshCwd(s, true).catch(() => {}); // 立刻校准 cwd，scope 从第一笔就准（不靠回车后的延迟轮询）
-    follow.label = s ? (baseOf(s.cwd || s.startDir || '') || s.title || '') : '';
+    follow.label = s ? term.displayTitle(s) : '';
   } else {
     follow.sid = null; follow.label = ''; // 浏览器版无终端：维持旧口径（全跟）
   }
@@ -4251,7 +4815,7 @@ if (window.fanboxPty) {
       s.dead = true; s.status = 'dead';
       s.xterm.write('\r\n\x1b[90m[进程已退出 — 回车重开，或 ✕ 关闭]\x1b[0m\r\n');
       term.renderTabs();
-      term.notify(s, '终端已退出', (s.title || 'shell') + ' 的进程结束了');
+      term.notify(s, '终端已退出', term.displayTitle(s) + ' 的进程结束了');
     }
   });
 }
@@ -4365,17 +4929,28 @@ function bindUpdateNotice() {
     if (localStorage.getItem('fb_skip_ver') === version || document.querySelector('.update-pill')) return;
     const bar = document.createElement('div');
     bar.className = 'update-pill';
-    bar.innerHTML = `<span>新版本 v${escapeHtml(version)} 已发布</span><button class="up-go">去下载</button><button class="up-x" title="这个版本不再提醒">✕</button>`;
+    bar.innerHTML = `<span>新版本 v${escapeHtml(version)} 已发布</span><button class="up-x" title="这个版本不再提醒">✕</button>`;
     document.body.appendChild(bar);
-    bar.querySelector('.up-go').onclick = () => { window.fanboxUpdate.open(url); bar.remove(); };
     bar.querySelector('.up-x').onclick = () => { localStorage.setItem('fb_skip_ver', version); bar.remove(); };
   };
   window.fanboxUpdate.onAvailable(show);
   // 主进程启动 6 秒就推送，init 加载大目录时这里可能还没注册监听——补拉一次，错过的推送不丢
   if (window.fanboxUpdate.get) window.fanboxUpdate.get().then((m) => { if (m) show(m); }).catch(() => {});
 }
+// ⌘R 通过主进程菜单 → IPC → renderer：浏览器开着就刷 webview，否则静默
+if (window.fanboxShortcut) {
+  window.fanboxShortcut.onHelp?.(() => toggleShortcutHelp());
+  window.fanboxShortcut.onReload(() => { if (window.fbBrowser && window.fbBrowser.active) window.fbBrowser.reload?.(); });
+  // ⌘W：终端焦点→关终端 tab，浏览器激活→关浏览器当前页，其他→无动作（不关窗口）
+  window.fanboxShortcut.onCloseTab(() => {
+    if (typeof term !== 'undefined' && term.active && document.querySelector('#terminal-panel')?.contains(document.activeElement)) {
+      term.closeTab(term.active);
+    } else if (window.fbBrowser && window.fbBrowser.active) {
+      window.fbBrowser.closeActive?.();
+    }
+  });
+}
 
 // 终端渲染器诊断开关：fbWebgl(false) 关 WebGL 用 DOM renderer 排查 CJK 残影，fbWebgl(true) 恢复。改完新开一个终端标签生效
 window.fbWebgl = (on) => { try { if (on) localStorage.removeItem('fanbox.noWebgl'); else localStorage.setItem('fanbox.noWebgl', '1'); } catch {} const off = (() => { try { return localStorage.getItem('fanbox.noWebgl') === '1'; } catch { return false; } })(); console.log('[fanbox] WebGL ' + (off ? '已关闭（DOM renderer）' : '已开启') + '，请新开一个终端标签验证'); return !off; };
-
 init();
