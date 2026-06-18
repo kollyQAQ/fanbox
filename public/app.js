@@ -1344,7 +1344,11 @@ async function mdEditor(e, data, mode = 'rich') {
     let ha, hb;
     try { ha = window.marked.parse(a || ''); hb = window.marked.parse(b || ''); } catch { return a === b; }
     const n = (s) => String(s).replace(/>\s+</g, '><').replace(/<\/?p>/g, '').replace(/\s+/g, ' ').trim();
-    return n(ha) === n(hb);
+    if (n(ha) === n(hb)) return true; // 渲染结构逐字一致：最严格放行
+    // 结构有差但仅是无害重排（表格列宽对齐、列表松紧、空白）：再比纯文本——可见文字没丢就放行，
+    // 只有真把内容吞了（HTML 块/代码/脚注的文字消失）才让文本对不上 → 锁源码。
+    const text = (s) => String(s).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    return text(ha) === text(hb);
   };
   const doSave = async (force) => {
     if (!getValue || paused) return;
