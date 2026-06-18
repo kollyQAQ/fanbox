@@ -28,8 +28,6 @@ window.FANBOX_DICT = {
 
   // ---------- 顶栏 ----------
   '折叠 / 展开侧栏 (⌘B)': 'Toggle sidebar (⌘B)',
-  '后退': 'Back',
-  '上一级': 'Up one level',
   '显示隐藏文件': 'Show hidden files',
   '隐藏文件': 'Hidden files',
   '名称': 'Name',
@@ -190,12 +188,21 @@ window.FANBOX_DICT = {
 
   // ---------- 项目记忆面板 ----------
   '翻会话日志中…': 'Digging through session logs…',
+  '项目记忆 · 全部 Agent 项目': 'Project memory · All agent projects',
+  '扫描项目中…': 'Scanning projects…',
+  '选左侧一个项目查看它的会话': 'Pick a project on the left to see its sessions',
   '这个文件夹还没有 agent 会话记录': 'No agent sessions in this folder yet',
   '在这里跑过 Claude Code / Codex 之后，历史会话会出现在这里': 'Run Claude Code / Codex here and past sessions will appear',
   '（无标题会话）': '(untitled session)',
   '在内嵌终端里接上这段会话的上下文继续': "Resume this session's context in the embedded terminal",
   '▶ 续上': '▶ Resume',
   '已在终端续上会话': 'Session resumed in terminal',
+  '改标题（Claude Code 里也会同步显示）': 'Rename (also shows up in Claude Code)',
+  '标题已更新': 'Title updated',
+  '改标题失败': 'Failed to rename',
+  '标题不能为空': 'Title cannot be empty',
+  '无效会话 id': 'Invalid session id',
+  '找不到这个会话的日志文件': "Can't find this session's log file",
 
   // ---------- AI 整理（终端交互式）----------
   '没找到 claude / codex 命令——AI 整理需要装其中一个 CLI': 'claude / codex command not found — AI organize needs one of these CLIs installed',
@@ -261,8 +268,13 @@ window.FANBOX_DICT = {
   // ---------- 终端 ----------
   '启动 Claude Code（跳过权限确认）：空闲终端就地启动，正跑着任务则新开标签': 'Launch Claude Code (skipping permission prompts): starts in the idle terminal, or opens a new tab if one is busy',
   '启动 Codex：空闲终端就地启动，正跑着任务则新开标签': 'Launch Codex: starts in the idle terminal, or opens a new tab if one is busy',
-  '终端跟随浏览：进文件夹时终端自动 cd 过去': 'Terminal follows browsing: auto-cd when you enter a folder',
-  '终端跟随': 'Follow',
+  '文件跟随：跟着当前终端 tab 的 agent，它改哪个文件，文件区和预览就跟到哪；html/md 边写边出实时预览（手动浏览即自动停）': "Follow files: tracks the current terminal tab's agent — the file view and preview follow whatever it edits; html/md render live as they are written (any manual browsing stops it)",
+  '文件跟随': 'Follow files',
+  '绑定的终端已关闭，文件跟随已停': 'The bound terminal was closed — follow stopped',
+  '文件跟随已开：agent 改哪个文件就看哪个': 'Follow on: now tracking whatever file the agent edits',
+  '文件跟随已停': 'Follow stopped',
+  '手动接管，文件跟随已停': 'You took over — follow stopped',
+  '跟随中': 'LIVE',
   '把文件区跳到终端当前所在目录': "Jump file view to the terminal's current folder",
   '定位文件': 'Locate',
   '新终端': 'New terminal',
