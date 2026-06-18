@@ -1,0 +1,79 @@
+/* browser: 内嵌浏览器（轻量多站点视图）—— 样式 100% 独立于 style.css，bw- 前缀，只吃皮肤变量 */
+#filemgmt { position: relative; } /* 面板锚定文件区（覆盖式，webview 常驻保活） */
+
+/* 降级版（非 Electron）没有 webview，顶栏入口必须真隐藏。 */
+:root:not(.desktop) #btn-browser { display: none; }
+
+#browser-panel {
+  position: absolute; inset: 0; z-index: 6;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+  visibility: hidden; /* 不用 display:none——webview 在 display:none 下有渲染异常的历史 bug */
+}
+#browser-panel.on { visibility: visible; }
+
+/* ---- 标签条 ---- */
+.bw-tabs { display: flex; align-items: center; gap: 5px; padding: 8px 10px; border-bottom: 1px solid var(--border); overflow-x: auto; flex: none; }
+.bw-tab { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-2); color: var(--text-dim); font-size: 12px; cursor: pointer; white-space: nowrap; user-select: none; }
+.bw-tab:hover { color: var(--text); border-color: var(--text-faint); }
+.bw-tab.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+.bw-tab-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.bw-fav { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+.bw-fav-d { display: inline-flex; color: var(--text-faint); flex: none; }
+.bw-fav-d svg { width: 13px; height: 13px; }
+.bw-tab-x { margin-left: 2px; padding: 0 3px; color: var(--text-faint); border-radius: 4px; }
+.bw-tab-x:hover { color: var(--text); background: var(--bg-3); }
+.bw-spin { width: 11px; height: 11px; border: 1.5px solid var(--text-faint); border-top-color: var(--accent); border-radius: 50%; animation: bw-spin 0.8s linear infinite; flex: none; }
+@keyframes bw-spin { to { transform: rotate(360deg); } }
+.bw-gear { margin-left: auto; flex: none; display: inline-flex; align-items: center; padding: 5px 7px; background: none; border: 1px solid transparent; border-radius: var(--radius); color: var(--text-dim); cursor: pointer; }
+.bw-gear:hover { color: var(--text); border-color: var(--border); background: var(--bg-2); }
+
+/* ---- 地址行 ---- */
+.bw-addr { display: flex; align-items: center; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex: none; }
+.bw-addr.hidden { display: none; }
+.bw-addr button { display: inline-flex; align-items: center; padding: 4px 6px; background: none; border: 1px solid transparent; border-radius: var(--radius); color: var(--text-dim); cursor: pointer; }
+.bw-addr button:hover:not(:disabled) { color: var(--text); border-color: var(--border); background: var(--bg-2); }
+.bw-addr button:disabled { opacity: 0.35; cursor: default; }
+.bw-url { flex: 1; min-width: 0; margin: 0 6px; font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
+
+/* ---- webview 栈 ---- */
+.bw-stack { flex: 1; position: relative; background: var(--bg); }
+.bw-stack webview { position: absolute; inset: 0; visibility: hidden; } /* 切换=显隐，滚动/历史/登录态全保留 */
+.bw-stack webview.bw-on { visibility: visible; }
+/* 离开浏览器模式（panel 无 .on）时强制压制所有 webview：CSS 里子元素显式 visibility:visible
+   会覆盖父的 visibility:hidden，光靠 panel 隐藏盖不住 webview，必须在此显式压制，否则
+   网页会透出浮在文件区上方。优先级 (1,1,1) 高于 .bw-stack webview.bw-on (0,2,1) */
+#browser-panel:not(.on) webview { visibility: hidden; }
+
+/* ---- 空状态 ---- */
+.bw-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-dim); }
+.bw-empty-t { font-size: 15px; color: var(--text); font-family: var(--font-display); }
+.bw-empty-s { font-size: 12px; color: var(--text-faint); }
+.bw-empty-add { margin-top: 6px; padding: 6px 14px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); color: var(--text); cursor: pointer; }
+.bw-empty-add:hover { background: var(--accent); color: var(--accent-ink); }
+
+/* ---- 设置弹层 ---- */
+.bw-modal-overlay { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, 0.35); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+.bw-modal-overlay.hidden { display: none; }
+.bw-modal { width: 580px; max-width: 92vw; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.bw-modal-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.bw-modal-head b { font-family: var(--font-display); font-size: 14px; }
+.bw-modal-hint { flex: 1; font-size: 11px; color: var(--text-faint); }
+.bw-modal-x { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 13px; }
+.bw-modal-x:hover { color: var(--text); }
+.bw-rows { max-height: 46vh; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.bw-row { display: flex; align-items: center; gap: 6px; padding: 4px; border: 1px solid transparent; border-radius: var(--radius); }
+.bw-row:hover { border-color: var(--border); background: var(--bg-2); }
+.bw-row.dragging { opacity: 0.45; }
+.bw-drag { cursor: grab; color: var(--text-faint); padding: 0 4px; user-select: none; }
+.bw-row input { padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: 12px; outline: none; }
+.bw-row input:focus { border-color: var(--accent); }
+.bw-in-name { width: 130px; flex: none; }
+.bw-in-url { flex: 1; min-width: 0; font-family: var(--font-mono); }
+.bw-row-del { flex: none; background: none; border: none; color: var(--text-faint); cursor: pointer; padding: 4px; border-radius: 4px; }
+.bw-row-del:hover { color: #e5534b; background: var(--bg-3); }
+.bw-modal-foot { display: flex; justify-content: space-between; padding: 10px 14px; border-top: 1px solid var(--border); }
+.bw-modal-foot button { padding: 6px 12px; border-radius: var(--radius); cursor: pointer; font-size: 12px; }
+.bw-add { background: none; border: 1px dashed var(--border); color: var(--text-dim); }
+.bw-add:hover { color: var(--text); border-color: var(--text-faint); }
+.bw-done { background: var(--accent); border: 1px solid var(--accent); color: var(--accent-ink); }
