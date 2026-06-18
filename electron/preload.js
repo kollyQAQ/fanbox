@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('fanboxEnv', {
 });
 
 contextBridge.exposeInMainWorld('fanboxShortcut', {
+  onHelp: (cb) => { const h = () => cb(); ipcRenderer.on('shortcut:help', h); return () => ipcRenderer.removeListener('shortcut:help', h); },
   onReload: (cb) => { const h = () => cb(); ipcRenderer.on('shortcut:reload', h); return () => ipcRenderer.removeListener('shortcut:reload', h); },
   onCloseTab: (cb) => { const h = () => cb(); ipcRenderer.on('shortcut:close-tab', h); return () => ipcRenderer.removeListener('shortcut:close-tab', h); },
 });
