@@ -661,6 +661,7 @@ async function parseClaudeSession(fp, st) {
   if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.sess;
   const sess = { id: path.basename(fp, '.jsonl'), agent: 'claude', title: '', firstT: 0, lastT: st.mtimeMs, userMsgs: 0, files: [], skills: [] };
   const filesSet = new Set(), skillsSet = new Set();
+  let customTitle = '', aiTitle = ''; // Claude Code 落盘的真标题行，重复出现以最后一条为准
   // 流式逐行，廉价字符串预判后才 JSON.parse——大会话文件也不整读进内存
   const stream = fs.createReadStream(fp, { encoding: 'utf8' });
   let rest = '';
@@ -668,6 +669,13 @@ async function parseClaudeSession(fp, st) {
     if (!sess.firstT) {
       const m = line.match(/"timestamp":"([^"]+)"/);
       if (m) sess.firstT = Date.parse(m[1]) || 0;
+    }
+    if (line.includes('"type":"custom-title"') || line.includes('"type":"ai-title"')) {
+      try {
+        const d = JSON.parse(line);
+        if (d.type === 'custom-title' && d.customTitle) customTitle = String(d.customTitle);
+        else if (d.type === 'ai-title' && d.aiTitle) aiTitle = String(d.aiTitle);
+      } catch { /* */ }
     }
     if (line.includes('"type":"user"') && !line.includes('"isMeta":true') && !line.includes('"tool_use_id"')) {
       sess.userMsgs++;
@@ -709,6 +717,8 @@ async function parseClaudeSession(fp, st) {
     while ((idx = rest.indexOf('\n')) !== -1) { handleLine(rest.slice(0, idx)); rest = rest.slice(idx + 1); }
   }
   if (rest.trim()) handleLine(rest);
+  // 标题优先级：用户手改 > AI 起的 > 首条用户消息兜底
+  sess.title = (customTitle || aiTitle || sess.title).slice(0, 160);
   sess.files = [...filesSet].slice(0, 80);
   sess.skills = [...skillsSet].slice(0, 20);
   projMemCache.set(fp, { size: st.size, mtimeMs: st.mtimeMs, sess });
@@ -784,6 +794,30 @@ async function projectMemory(p) {
   return { ok: true, cwd, sessions: sessions.filter((s) => s.title || s.files.length).slice(0, 40) };
 }
 
+// 改会话标题：复用 Claude Code 自己的 custom-title 机制——往会话 jsonl 末尾 append 一行，
+// 重复出现以最后一条为准，所以不用重写文件，对运行中的会话也安全；claude --resume 选择器同步可见
+async function setSessionTitle(b) {
+  const id = String(b.id || '');
+  if (!/^[0-9a-f][0-9a-f-]{7,}$/i.test(id)) return { ok: false, error: '无效会话 id' };
+  const title = String(b.title || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+  if (!title) return { ok: false, error: '标题不能为空' };
+  const fp = path.join(CLAUDE_PROJ, mungeClaudeDir(resolvePath(b.path)), id + '.jsonl');
+  let st;
+  try { st = await fsp.stat(fp); } catch { return { ok: false, error: '找不到这个会话的日志文件' }; }
+  // 文件末尾若没换行（异常截断），补一个再 append，免得粘到上一行把两行都毁了
+  let needNL = false;
+  if (st.size > 0) {
+    const fh = await fsp.open(fp, 'r');
+    try {
+      const buf = Buffer.alloc(1);
+      await fh.read(buf, 0, 1, st.size - 1);
+      needNL = buf[0] !== 0x0a;
+    } finally { await fh.close(); }
+  }
+  await fsp.appendFile(fp, (needNL ? '\n' : '') + JSON.stringify({ type: 'custom-title', customTitle: title, sessionId: id }) + '\n');
+  return { ok: true, title };
+}
+
 // ---------- 磁盘占用透视：算清当前目录每个子项的真实占用 ----------
 // 文件直接 stat（快）；目录一次 du -sk 批量算。du 碰到无权限子目录会报错但仍输出能算的部分，所以忽略 err 只用 stdout
 async function diskUsage(p) {
@@ -811,22 +845,75 @@ async function diskUsage(p) {
 }
 
 // 压缩包内容清单：全用系统自带工具（unzip / bsdtar / gzip），保持零依赖
+// 直接读 zip 中央目录拿文件名：按「通用位标记 bit 11 = UTF-8」决定编码，没设就按 GBK 解（中文名才不乱码）。
+// 系统 unzip/bsdtar 会先把字节转码、丢失原始编码，没法事后挽救，所以自己解。zip64/异常结构返回 null 交回退。
+async function zipNames(file, MAX) {
+  let fd;
+  try {
+    fd = await fsp.open(file, 'r');
+    const { size } = await fd.stat();
+    const tailLen = Math.min(size, 65557); // EOCD 22 字节 + 最多 65535 注释
+    const tail = Buffer.alloc(tailLen);
+    await fd.read(tail, 0, tailLen, size - tailLen);
+    let eocd = -1;
+    for (let i = tail.length - 22; i >= 0; i--) { if (tail.readUInt32LE(i) === 0x06054b50) { eocd = i; break; } }
+    if (eocd < 0) return null;
+    const cdCount = tail.readUInt16LE(eocd + 10);
+    const cdSize = tail.readUInt32LE(eocd + 12);
+    const cdOffset = tail.readUInt32LE(eocd + 16);
+    if (cdOffset === 0xffffffff || cdSize === 0xffffffff) return null; // zip64，超出本简单解析
+    const cd = Buffer.alloc(cdSize);
+    await fd.read(cd, 0, cdSize, cdOffset);
+    const gbk = new TextDecoder('gbk');
+    const out = [];
+    let p = 0;
+    for (let i = 0; i < cdCount && p + 46 <= cd.length; i++) {
+      if (cd.readUInt32LE(p) !== 0x02014b50) break; // central file header 签名
+      const flag = cd.readUInt16LE(p + 8);
+      const usize = cd.readUInt32LE(p + 24);
+      const nameLen = cd.readUInt16LE(p + 28);
+      const extraLen = cd.readUInt16LE(p + 30);
+      const commentLen = cd.readUInt16LE(p + 32);
+      const nameBuf = cd.subarray(p + 46, p + 46 + nameLen);
+      let nm;
+      if (flag & 0x800) nm = nameBuf.toString('utf8');
+      else { try { nm = gbk.decode(nameBuf); } catch { nm = nameBuf.toString('utf8'); } }
+      out.push({ name: nm, size: usize });
+      p += 46 + nameLen + extraLen + commentLen;
+      if (out.length > MAX) break;
+    }
+    return out;
+  } catch { return null; } // 解析失败一律交给 unzip 兜底
+  finally { if (fd) await fd.close().catch(() => {}); }
+}
+
 async function archiveList(p) {
   const file = resolvePath(p);
   try { await fsp.stat(file); } catch { return { ok: false, error: '文件不存在' }; }
   const name = path.basename(file).toLowerCase();
+  // 压缩包里的中文名常是 GBK/CP936 且没设 UTF-8 标志位，按 UTF-8 读会乱码：
+  // 拿原始字节，先严格按 UTF-8 解，失败（多半是 GBK 中文名）再回退 GBK。
+  const decodeMaybeGbk = (buf) => {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch { try { return new TextDecoder('gbk').decode(buf); } catch { return buf.toString('latin1'); } }
+  };
   const run = (cmd, args) => new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: 15000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+    execFile(cmd, args, { timeout: 15000, maxBuffer: 8 * 1024 * 1024, encoding: 'buffer' }, (err, stdout) => (err ? reject(err) : resolve(decodeMaybeGbk(stdout))));
   });
   const MAX = 800;
   const entries = [];
   try {
     if (/\.(zip|jar)$/.test(name)) {
-      const out = await run('unzip', ['-l', '--', file]);
-      for (const line of out.split('\n')) {
-        const m = line.match(/^\s*(\d+)\s+\S+\s+\S+\s+(.+)$/);
-        if (m) entries.push({ name: m[2], size: Number(m[1]) });
-        if (entries.length > MAX) break;
+      const parsed = await zipNames(file, MAX); // 自读中央目录，中文名按 GBK/UTF-8 正确解（unzip 会乱码）
+      if (parsed) {
+        entries.push(...parsed);
+      } else { // zip64 / 异常结构本解析器够不着：回退 unzip（名字可能乱码，但至少列得出）
+        const out = await run('unzip', ['-l', '--', file]);
+        for (const line of out.split('\n')) {
+          const m = line.match(/^\s*(\d+)\s+\S+\s+\S+\s+(.+)$/);
+          if (m) entries.push({ name: m[2], size: Number(m[1]) });
+          if (entries.length > MAX) break;
+        }
       }
     } else if (/\.(tar|tgz|tbz2?|txz)$/.test(name) || /\.tar\.(gz|bz2|xz|zst)$/.test(name)) {
       const out = await run('tar', ['-tf', file]); // bsdtar 自动识别压缩格式
@@ -1178,12 +1265,36 @@ async function serveThumb(req, res, p, size) {
   catch { res.writeHead(415); res.end('no thumb'); } // 前端 onerror 回退矢量图标
 }
 
+// HEIC/HEIF 浏览器与 Chromium 原生不支持：用 sips 全尺寸转码成 jpeg 缓存后再吐，
+// /api/raw 和 /fs/ 都透明走这条，markdown 里的 ![](x.heic) 预览即可显示。复用缩略图那套 run/缓存/LRU。
+const HEIC_EXT = new Set(['heic', 'heif']);
+async function serveHeicAsJpeg(req, res, file, st) {
+  const key = crypto.createHash('md5').update(file + ':' + st.mtimeMs).digest('hex');
+  const cacheFile = path.join(THUMB_DIR, key + '.heic.jpg');
+  const send = () => {
+    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'max-age=604800' });
+    const rs = fs.createReadStream(cacheFile);
+    rs.on('error', () => { try { res.destroy(); } catch { /* */ } });
+    rs.pipe(res);
+  };
+  if (fs.existsSync(cacheFile)) return send();
+  let pr = thumbInflight.get(cacheFile);
+  if (!pr) {
+    pr = (async () => { await fsp.mkdir(THUMB_DIR, { recursive: true }); await run('sips', ['-s', 'format', 'jpeg', file, '--out', cacheFile]); })()
+      .finally(() => thumbInflight.delete(cacheFile));
+    thumbInflight.set(cacheFile, pr);
+  }
+  try { await pr; pruneThumbs(); send(); }
+  catch { res.writeHead(415); res.end('heic transcode failed'); } // 前端 onerror 回退矢量图标
+}
+
 // 流式返回原始文件（图片 / 视频 / pdf / 音频预览），支持 Range
 function serveRaw(req, res, filePath) {
   let file;
   try { file = resolvePath(filePath); } catch { res.writeHead(400); res.end('bad path'); return; }
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); res.end('not found'); return; }
+    if (HEIC_EXT.has(ext(file))) return serveHeicAsJpeg(req, res, file, st); // HEIC → 转码 jpeg，绕过下面的原始字节路径
     const type = MIME[ext(file)] || 'application/octet-stream';
     const onStreamErr = (rs) => rs.on('error', () => { try { res.destroy(); } catch { /* */ } });
     const range = req.headers.range;
@@ -1235,6 +1346,14 @@ async function serveHtmlPreview(req, res, filePath) {
   img, video { max-width: 100%; height: auto; }
 </style>`;
     const measureScript = '<script data-fanbox-measure>(function(){var l=0;function r(){var w=Math.max(document.documentElement.scrollWidth,document.body?document.body.scrollWidth:0);if(w&&w!==l){l=w;try{parent.postMessage({fanboxPreviewWidth:w},"*")}catch(e){}}}addEventListener("load",function(){r();setTimeout(r,300)});addEventListener("resize",r)})()</script>';
+    // 本地图片引用兜底：不同 agent 写 html 引图方式各异，http 预览（沙箱 iframe）里有两类必裂——
+    //   ① file:// 绝对 URL（http 页面禁加载 file://）；② /Users 这种裸绝对路径（解析到源站根）。
+    // 策略分两层，确保「修问题不引入新问题」：
+    //   · 主动改写：只碰 file://（http 预览里永远加载不了，改成 /fs 镜像只会帮忙、不会误伤任何能用的引用）；
+    //   · 失败兜底：其余绝对路径只在「已加载失败」时才重写到 /fs 再试一次（对本来能加载的引用零影响 → 结构性零回归）。
+    //   · 相对路径走 /fs/<目录>/ 本就正常，失败多半是文件真没了，不强行兜底。
+    // 未覆盖（注释在此说清，别让后人误以为全兜住）：<style> 块/外部 css 里的 file:// 背景图、srcset、加载后 JS 动态插入的元素。
+    const localImgScript = '<script data-fanbox-localimg>(function(){var FS="/fs";function f2fs(u){return (u&&u.slice(0,7)==="file://")?FS+u.slice(7):null;}function fix(el){if(!el.getAttribute)return;["src","href","poster"].forEach(function(a){var v=el.getAttribute(a),n=f2fs(v);if(n)el.setAttribute(a,n);});var st=el.getAttribute("style");if(st&&st.indexOf("file://")>-1)el.setAttribute("style",st.split("file://").join(FS));}function sweep(){document.querySelectorAll("[src],[href],[poster],[style]").forEach(fix);}sweep();document.addEventListener("DOMContentLoaded",sweep);document.addEventListener("error",function(e){var el=e.target;if(!el||!el.getAttribute||el.getAttribute("data-fs-tried"))return;var attr=el.tagName==="LINK"?"href":"src",v=el.getAttribute(attr);if(!v||v.charAt(0)!=="/"||v.slice(0,4)==="/fs/")return;if(/^(https?:|data:|blob:)/.test(v))return;el.setAttribute("data-fs-tried","1");el.setAttribute(attr,FS+v);},true);})()</script>';
     function injectHead(tag) {
       const headClose = html.match(/<\/head>/i);
       const headOpen = html.match(/<head[^>]*>/i);
@@ -1260,6 +1379,9 @@ async function serveHtmlPreview(req, res, filePath) {
     }
     if (!html.includes('data-fanbox-measure')) {
       injectHead(measureScript);
+    }
+    if (!html.includes('data-fanbox-localimg')) {
+      injectHead(localImgScript);
     }
     const buf = Buffer.from(html, 'utf8');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': buf.length });
@@ -1540,7 +1662,7 @@ async function agentProjects() {
   const sorted = [...map.entries()].sort((a, b) => b[1].lastActive - a[1].lastActive);
   const projects = [];
   for (const [cwd, info] of sorted) {
-    if (projects.length >= 12) break;
+    if (projects.length >= 50) break; // 侧栏只取前 8，全局记忆浏览器要看全部——上限放到 50 兜底
     try { if (!(await fsp.stat(cwd)).isDirectory()) continue; } catch { continue; }
     projects.push({ path: cwd, name: path.basename(cwd), agents: [...info.agents], lastActive: info.lastActive });
   }
@@ -1964,6 +2086,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/project-memory') {
       return sendJSON(res, 200, await projectMemory(url.searchParams.get('path')));
+    }
+    if (p === '/api/session-title' && req.method === 'POST') {
+      return sendJSON(res, 200, await setSessionTitle(await readBody(req)));
     }
     if (p === '/api/lang' && req.method === 'POST') {
       const b = await readBody(req);
