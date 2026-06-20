@@ -199,6 +199,7 @@ const state = {
   muted: localStorage.getItem('fb_muted') === '1', // WOW4 提示音静音开关
   changeLog: [], // 本会话 agent 改过的文件（跨所有监听目录，按文件去重、最新置顶），供「变更」面板回看
   changeTimeline: [], // 每一次写入事件（不去重，带时间戳），供「会话回放」拖时间轴重现
+  git: null, gitReq: 0, // 当前目录所在仓库状态：分支 / 工作区改动计数
 };
 
 // ---------- 工具 ----------
@@ -382,6 +383,7 @@ async function navigate(p, pushHistory = true) {
     if (data.error) { toast('无法打开：' + data.error, true); return; }
     if (pushHistory && state.cwd) state.history.push(state.cwd);
     state.cwd = data.path;
+    state.git = null;
     try { window.fanboxWechat && window.fanboxWechat.setCwd(state.cwd); } catch { /* 微信 ClawBot 的 agent 工作目录跟随当前项目 */ }
     state.entries = data.entries;
     state.project = data.project;
@@ -391,6 +393,7 @@ async function navigate(p, pushHistory = true) {
     state.skillsMode = false;
     state.cursor = -1;
     render();
+    requestGitStatus();
     renderRootsActive();
     // 联动：监听此目录 + 各终端项目目录的文件变化（agent 改文件→自动刷新）
     updateWatches();
@@ -465,6 +468,50 @@ function visibleEntries() {
   else list.sort((a, b) => dirFirst(a, b) || a.name.localeCompare(b.name, 'zh', { numeric: true }));
   return list;
 }
+function gitStatusLabel(g) {
+  const s = g.summary || {};
+  const branch = g.branch || 'HEAD';
+  const sync = `${g.ahead ? ` ↑${g.ahead}` : ''}${g.behind ? ` ↓${g.behind}` : ''}`;
+  return `${branch}${sync} · ${s.total ? `${s.total} 改动` : '干净'}`;
+}
+function gitStatusTitle(g) {
+  const s = g.summary || {};
+  const bits = [];
+  if (s.staged) bits.push(`${s.staged} 暂存`);
+  if (s.unstaged) bits.push(`${s.unstaged} 未暂存`);
+  if (s.untracked) bits.push(`${s.untracked} 未跟踪`);
+  if (s.conflicted) bits.push(`${s.conflicted} 冲突`);
+  const rel = g.root ? tilde(g.root) : '';
+  const sync = [g.upstream ? `上游 ${g.upstream}` : '', g.ahead ? `领先 ${g.ahead}` : '', g.behind ? `落后 ${g.behind}` : ''].filter(Boolean).join(' · ');
+  return [`Git 仓库：${rel}`, `分支：${g.branch || 'HEAD'}`, sync, bits.length ? bits.join(' · ') : '工作区干净'].filter(Boolean).join('\n');
+}
+function gitPillHtml() {
+  const g = state.git;
+  if (!g || g.path !== state.cwd) return '';
+  if (g.loading) return `<span class="git-pill loading" title="正在读取 git 状态">${ic('gitbranch', 'currentColor', 12)}<span>git…</span></span>`;
+  if (!g.isRepo) return '';
+  const s = g.summary || {};
+  const tone = s.conflicted ? 'conflict' : (s.total ? 'dirty' : 'clean');
+  return `<span class="git-pill ${tone}" title="${escapeHtml(gitStatusTitle(g))}">${ic('gitbranch', 'currentColor', 12)}<span>${escapeHtml(gitStatusLabel(g))}</span></span>`;
+}
+function requestGitStatus(opts = {}) {
+  if (state.skillsMode || state.recentMode || !state.cwd) { state.git = null; renderStatusbar(); return; }
+  const path = state.cwd;
+  const token = ++state.gitReq;
+  if (!opts.quiet || !state.git || state.git.path !== path) {
+    state.git = { loading: true, path };
+    renderStatusbar();
+  }
+  api('/api/git?path=' + encodeURIComponent(path)).then((g) => {
+    if (token !== state.gitReq || state.cwd !== path || state.skillsMode || state.recentMode) return;
+    state.git = { ...(g || { isRepo: false }), path };
+    renderStatusbar();
+  }).catch(() => {
+    if (token !== state.gitReq || state.cwd !== path) return;
+    state.git = { isRepo: false, path };
+    renderStatusbar();
+  });
+}
 // 底部状态条：当前文件夹的基础信息小字常驻，「占用透视」入口也安在这
 function renderStatusbar() {
   const sb = $('#statusbar'); if (!sb) return;
@@ -474,7 +521,8 @@ function renderStatusbar() {
   const files = list.length - dirs;
   const bytes = list.reduce((a, e) => a + (e.isDir ? 0 : e.size || 0), 0);
   sb.classList.remove('hidden');
-  sb.innerHTML = `<span>${list.length} 项${dirs ? ` · ${dirs} 文件夹` : ''}${files ? ` · ${files} 文件 ${fmtSize(bytes)}` : ''}</span><span class="sb-links">${state.project ? '<a id="sb-rel" title="版本号→CHANGELOG→打包→push→Release 一条龙，在终端跑">发版</a>' : ''}<a id="sb-mem" title="这个文件夹里 AI 干过什么：历史会话、改过的文件、一键续上">项目记忆</a><a id="sb-du" title="算上子目录的真实磁盘占用">占用透视</a></span>`;
+  const count = `${list.length} 项${dirs ? ` · ${dirs} 文件夹` : ''}${files ? ` · ${files} 文件 ${fmtSize(bytes)}` : ''}`;
+  sb.innerHTML = `<span class="sb-left"><span class="sb-count">${count}</span>${gitPillHtml()}</span><span class="sb-links">${state.project ? '<a id="sb-rel" title="版本号→CHANGELOG→打包→push→Release 一条龙，在终端跑">发版</a>' : ''}<a id="sb-mem" title="这个文件夹里 AI 干过什么：历史会话、改过的文件、一键续上">项目记忆</a><a id="sb-du" title="算上子目录的真实磁盘占用">占用透视</a></span>`;
   $('#sb-du').onclick = () => diskPanel(state.cwd);
   $('#sb-mem').onclick = () => memoryPanel(state.cwd);
   const rel = $('#sb-rel'); if (rel) rel.onclick = () => releasePanel();
@@ -1321,6 +1369,7 @@ async function refresh() {
   state.breadcrumb = data.breadcrumb;
   renderBreadcrumb();
   renderFiles();
+  requestGitStatus({ quiet: true });
 }
 // 文本原地编辑：md → Milkdown Crepe 所见即所得；其它 → Monaco；都失败回退 textarea
 async function enterEditMode(e) {
@@ -2669,13 +2718,19 @@ function bindEvents() {
   // 文件区空白处双击/右键 → 新建菜单（#7：右键空白是更普遍的肌肉记忆）
   const blankMenu = (e) => {
     if (e.target.closest('.item') || e.target.closest('.row')) return; // 条目自身的菜单不抢
+    if (!state.cwd || state.skillsMode) return;
     e.preventDefault();
+    const cur = { path: state.cwd, name: baseOf(state.cwd) || state.cwd, isDir: true };
     popupMenu(e, [
       { label: '新建文件夹…', fn: () => doCreate('dir') },
       { label: '新建文件…', fn: () => doCreate('file') },
       { sep: true },
       { label: 'AI 整理…', fn: () => organizeLaunch(state.cwd) },
       { label: '磁盘占用透视', fn: () => diskPanel(state.cwd) },
+      { sep: true },
+      { label: '在 Finder 显示', fn: () => openWith(state.cwd, 'reveal') },
+      { label: '复制路径', fn: () => copyPath(state.cwd) },
+      { label: isFav(state.cwd) ? '取消收藏' : '收藏', fn: () => toggleFav(cur) },
     ]);
   };
   $('#file-area').addEventListener('dblclick', blankMenu);

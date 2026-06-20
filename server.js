@@ -652,9 +652,48 @@ async function releasePrepare(b) {
 
 // ---------- 项目记忆：这个文件夹里 AI 干过什么 ----------
 // 数据源：~/.claude/projects/<munge(cwd)>/*.jsonl + ~/.codex/sessions/**/rollout-*.jsonl（头部 cwd 匹配）。
+// Codex 真标题来自 state_5.sqlite / session_index.jsonl；rollout 日志只负责会话内容和兜底标题。
 // 单会话解析结果按 (size, mtime) 缓存，再次打开只重解析有变化的文件。
 const projMemCache = new Map(); // file -> { size, mtimeMs, sess }
+const codexTitleCache = new Map(); // cwd -> { at, titles }
 const mungeClaudeDir = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, '-');
+
+const sqlString = (s) => `'${String(s).replace(/'/g, "''")}'`;
+
+function withCodexTitle(sess, titles) {
+  if (!titles || !sess.id) return sess;
+  const title = titles.get(sess.id);
+  return title ? { ...sess, title } : sess;
+}
+
+async function readCodexTitleIndex(cwd) {
+  const hit = codexTitleCache.get(cwd);
+  if (hit && Date.now() - hit.at < 10000) return hit.titles;
+  const titles = new Map();
+  try {
+    const sql = `select id,title from threads where cwd=${sqlString(cwd)} and title<>'' order by updated_at desc limit 500`;
+    const out = await new Promise((resolve, reject) => {
+      execFile('sqlite3', ['-readonly', '-json', CODEX_STATE_DB, sql], { timeout: 5000, maxBuffer: 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+    });
+    for (const row of JSON.parse(out || '[]')) {
+      if (row && row.id && row.title) titles.set(String(row.id), String(row.title).slice(0, 160));
+    }
+  } catch { /* sqlite3 不可用 / 旧版 Codex 没有 state DB：下面读 session_index 兜底 */ }
+  try {
+    const txt = await fsp.readFile(CODEX_SESSION_INDEX, 'utf8');
+    const fallback = new Map();
+    for (const line of txt.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const d = JSON.parse(line);
+        if (d.id && d.thread_name) fallback.set(String(d.id), String(d.thread_name).slice(0, 160));
+      } catch { /* */ }
+    }
+    for (const [id, title] of fallback) if (!titles.has(id)) titles.set(id, title);
+  } catch { /* 没有 Codex Desktop 索引时保持 rollout 兜底标题 */ }
+  codexTitleCache.set(cwd, { at: Date.now(), titles });
+  return titles;
+}
 
 async function parseClaudeSession(fp, st) {
   const hit = projMemCache.get(fp);
@@ -725,9 +764,9 @@ async function parseClaudeSession(fp, st) {
   return sess;
 }
 
-async function parseCodexSession(fp, st) {
+async function parseCodexSession(fp, st, titles) {
   const hit = projMemCache.get(fp);
-  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.sess;
+  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return withCodexTitle(hit.sess, titles);
   const sess = { id: '', agent: 'codex', title: '', firstT: st.birthtimeMs || 0, lastT: st.mtimeMs, userMsgs: 0, files: [], skills: [] };
   try {
     const txt = await fsp.readFile(fp, 'utf8');
@@ -752,7 +791,7 @@ async function parseCodexSession(fp, st) {
   } catch { /* */ }
   if (!sess.id) sess.id = path.basename(fp, '.jsonl').replace(/^rollout-[\d-]*T[\d-]*-/, '');
   projMemCache.set(fp, { size: st.size, mtimeMs: st.mtimeMs, sess });
-  return sess;
+  return withCodexTitle(sess, titles);
 }
 
 async function projectMemory(p) {
@@ -770,6 +809,7 @@ async function projectMemory(p) {
   } catch { /* 这个目录没有 Claude Code 会话 */ }
   // Codex：近期 rollout 文件按头部 cwd 匹配（数量封顶控 IO）
   try {
+    const codexTitles = await readCodexTitleIndex(cwd);
     const files = [];
     const walk = async (dir, depth) => {
       let names;
@@ -785,7 +825,7 @@ async function projectMemory(p) {
     await walk(CODEX_SESS, 0);
     files.sort((a, b) => b.st.mtimeMs - a.st.mtimeMs);
     for (const { fp, st } of files.slice(0, 60)) {
-      try { if ((await readCwdFromHead(fp, 16384)) === cwd) sessions.push(await parseCodexSession(fp, st)); } catch { /* */ }
+      try { if ((await readCwdFromHead(fp, 16384)) === cwd) sessions.push(await parseCodexSession(fp, st, codexTitles)); } catch { /* */ }
     }
   } catch { /* 没用过 Codex */ }
   // 没有正经标题的会话（纯 warmup / 空会话）沉底，按最近活跃排
@@ -1072,15 +1112,41 @@ async function gitStatus(dirPath) {
   const dir = resolvePath(dirPath);
   const root = await gitRoot(dir);
   if (!root) return { isRepo: false };
+  const br = await execGit(['-C', root, 'branch', '--show-current'], root);
+  let branch = br.ok ? br.stdout.trim() : '';
+  if (!branch) {
+    const head = await execGit(['-C', root, 'rev-parse', '--short', 'HEAD'], root);
+    branch = head.ok && head.stdout.trim() ? `detached@${head.stdout.trim()}` : 'HEAD';
+  }
+  let upstream = '';
+  let ahead = 0, behind = 0;
+  const up = await execGit(['-C', root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], root);
+  if (up.ok && up.stdout.trim()) {
+    upstream = up.stdout.trim();
+    const ab = await execGit(['-C', root, 'rev-list', '--left-right', '--count', `${upstream}...HEAD`], root);
+    if (ab.ok) {
+      const [b, a] = ab.stdout.trim().split(/\s+/).map((n) => Number(n) || 0);
+      behind = b || 0; ahead = a || 0;
+    }
+  }
   const st = await execGit(['-C', root, 'status', '--porcelain'], root);
+  const summary = { total: 0, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 };
   const files = (st.stdout || '').split('\n').filter(Boolean).map((line) => {
     const code = line.slice(0, 2);
+    const x = code[0], y = code[1];
+    summary.total++;
+    if (code === '??') summary.untracked++;
+    else {
+      if (x && x !== ' ') summary.staged++;
+      if (y && y !== ' ') summary.unstaged++;
+      if (x === 'U' || y === 'U' || code === 'AA' || code === 'DD') summary.conflicted++;
+    }
     let rest = line.slice(3);
     if (rest.includes(' -> ')) rest = rest.split(' -> ')[1]; // 重命名取新名
     rest = rest.replace(/^"|"$/g, '');
     return { code, status: code.trim(), path: path.join(root, rest), name: path.basename(rest) };
   });
-  return { isRepo: true, root, files };
+  return { isRepo: true, root, branch, upstream, ahead, behind, dirty: summary.total > 0, summary, files };
 }
 // 单文件 HEAD 版本 vs 工作区当前内容，供 Monaco DiffEditor 并排渲染
 async function gitFileDiff(p) {
@@ -1415,7 +1481,11 @@ function readBody(req) {
 // Claude Code：~/.claude/projects/**/*.jsonl 里每条 assistant 消息带 usage（token 明细）→ 增量解析聚合
 // Codex：~/.codex/sessions/**/rollout-*.jsonl 的 token_count 事件带 rate_limits（5h 窗口/周配额百分比，官方数）→ tail 取最新快照
 const CLAUDE_PROJ = path.join(HOME, '.claude', 'projects');
-const CODEX_SESS = path.join(HOME, '.codex', 'sessions');
+const CODEX_HOME = process.env.CODEX_HOME || path.join(HOME, '.codex');
+const CODEX_SQLITE_HOME = process.env.CODEX_SQLITE_HOME || CODEX_HOME;
+const CODEX_SESS = path.join(CODEX_HOME, 'sessions');
+const CODEX_STATE_DB = path.join(CODEX_SQLITE_HOME, 'state_5.sqlite');
+const CODEX_SESSION_INDEX = path.join(CODEX_HOME, 'session_index.jsonl');
 const claudeFileCache = new Map(); // file -> { offset, lastMsgId, events: [{t, in, out, cc, cr}] }
 let usageResultCache = { at: 0, data: null };
 
