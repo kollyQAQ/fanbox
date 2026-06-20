@@ -20,5 +20,8 @@ build/*
 # 验证脚本的截图产物（可复跑重生成，不入库）
 experiments/bugfix-202606/shots/
 
-# 自定义 Claude Code 命令（本地工作流，不入库，避免发 PR 时带上）
+# 本地 Agent/Codex/Claude 工作流资料（只在本机生效，不入库）
+.agents/
 .claude/
+AGENTS.md
+CLAUDE.md

@@ -77,6 +77,14 @@ window.FANBOX_DICT = {
   '移到废纸篓': 'Move to Trash',
   '新建文件夹…': 'New folder…',
   '新建文件…': 'New file…',
+  '干净': 'clean',
+  '改动': 'changes',
+  '暂存': 'staged',
+  '未暂存': 'unstaged',
+  '未跟踪': 'untracked',
+  '冲突': 'conflicts',
+  '工作区干净': 'Working tree clean',
+  '正在读取 git 状态': 'Reading git status',
 
   // ---------- 预览 ----------
   '加载中…': 'Loading…',
@@ -416,6 +424,8 @@ window.FANBOX_DICT_RULES = [
   [/^把「(.+)」移到废纸篓？（系统废纸篓里随时可恢复）$/, (m) => `Move "${m[1]}" to Trash? (Restorable from the system Trash anytime)`],
   [/^刚变更：\n([\s\S]+)$/, (m) => `Just changed:\n${m[1]}`],
   [/^改·(\d+)$/, (m) => `edited·${m[1]}`],
+  [/^(.+) · 干净$/, (m) => `${m[1]} · clean`],
+  [/^(.+) · (\d+) 改动$/, (m) => `${m[1]} · ${m[2]} changes`],
   // 面包屑 / 标题
   [/^([A-Z0-9_.+-]+) 项目$/, (m) => `${m[1]} project`],
   [/^终端「(.*)」正在这个项目里干活$/, (m) => `Terminal "${m[1]}" is working in this project`],
