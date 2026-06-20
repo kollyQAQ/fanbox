@@ -2073,11 +2073,21 @@ async function loadFavorites() {
   state.recentOpened = data.recentOpened || [];
   renderFavs();
 }
+function favoriteDisplayList() {
+  const nameOf = (f) => f.name || baseOf(f.path || '');
+  const byName = (a, b) => nameOf(a.f).localeCompare(nameOf(b.f), 'zh', { numeric: true })
+    || String(a.f.path || '').localeCompare(String(b.f.path || ''), 'zh', { numeric: true })
+    || a.i - b.i;
+  const dirs = [], files = [];
+  state.favorites.forEach((f, i) => (f.isDir ? dirs : files).push({ f, i }));
+  dirs.sort(byName);
+  return [...dirs, ...files].map((x) => x.f);
+}
 function renderFavs() {
   const ul = $('#favs-list');
   ul.innerHTML = '';
   if (!state.favorites.length) { ul.innerHTML = '<div class="nav-empty">悬停文件点 ☆ 即可收藏</div>'; return; }
-  state.favorites.forEach((f) => {
+  favoriteDisplayList().forEach((f) => {
     let li;
     if (f.isDir) {
       li = navDirLi(f.name, f.path);
