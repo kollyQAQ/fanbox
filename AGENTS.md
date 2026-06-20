@@ -13,7 +13,7 @@
 - **作者自己实现了我某功能（且更好）→ 丢弃我的**：`git branch -D feature/<名>` → 重建 main（reset 到新 `origin/master` 后重新 merge 剩余分支）→ `git diff <旧main> HEAD` 验证无意外丢失 → 在 `BRANCHES.md` 移到「已删除」区。
 
 ## 跟进上游
-用 `/check-upstream` 命令（`.Codex/commands/check-upstream.md`）：查作者更新 → 总结 → dry-run 评估 → 停下等我拍板。
+Codex 用 `$check-upstream` skill（`.agents/skills/check-upstream/SKILL.md`）；Claude Code 的 `/check-upstream` 只是读取同一份 skill 的兼容入口。流程：查作者更新 → 总结 → dry-run 评估 → 停下等我拍板。
 
 ## 硬性约定
 1. **改代码前先识别分支**：根据改动内容对照 `BRANCHES.md` 判断该在哪个 feature 分支上改。不确定时问我确认，**不要直接在 `feature/kolly-main` 上写功能代码**。
