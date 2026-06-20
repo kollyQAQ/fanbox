@@ -15,7 +15,7 @@
 | `feature/file-preview`       | 点开头隐藏文件可预览/编辑/diff + .\*rc 等无扩展名文件可编辑；文件区空白右键可操作当前目录，并在状态条显示当前 Git 分支/工作区改动情况                                                       | —      |
 | `feature/max-layout`         | ⌘⇧F 焦点铺满（已并入 keyboard-shortcuts，保留分支供 PR）                                                   | —  |
 | `chore/strip-nul-bytes`      | 终端验证缓存 key 的 NUL 分隔符改为转义                                                                    | —      |
-| `feature/ui-tweaks`          | UI 微调：移除更新提示的「去下载」按钮                                                                         | —      |
+| `feature/ui-tweaks`          | UI 微调：移除更新提示的「去下载」按钮；收藏文件夹按字母顺序展示                                                                         | —      |
 | `feature/md-lossless-relax`  | md 无损判定放宽：结构比对失败时再比纯文本，表格/列表/空白等无害重排不再误锁源码（只有真吞内容才锁）                                          | —      |
 
 ## 已删除/废弃
