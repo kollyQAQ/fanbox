@@ -1072,15 +1072,41 @@ async function gitStatus(dirPath) {
   const dir = resolvePath(dirPath);
   const root = await gitRoot(dir);
   if (!root) return { isRepo: false };
+  const br = await execGit(['-C', root, 'branch', '--show-current'], root);
+  let branch = br.ok ? br.stdout.trim() : '';
+  if (!branch) {
+    const head = await execGit(['-C', root, 'rev-parse', '--short', 'HEAD'], root);
+    branch = head.ok && head.stdout.trim() ? `detached@${head.stdout.trim()}` : 'HEAD';
+  }
+  let upstream = '';
+  let ahead = 0, behind = 0;
+  const up = await execGit(['-C', root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], root);
+  if (up.ok && up.stdout.trim()) {
+    upstream = up.stdout.trim();
+    const ab = await execGit(['-C', root, 'rev-list', '--left-right', '--count', `${upstream}...HEAD`], root);
+    if (ab.ok) {
+      const [b, a] = ab.stdout.trim().split(/\s+/).map((n) => Number(n) || 0);
+      behind = b || 0; ahead = a || 0;
+    }
+  }
   const st = await execGit(['-C', root, 'status', '--porcelain'], root);
+  const summary = { total: 0, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 };
   const files = (st.stdout || '').split('\n').filter(Boolean).map((line) => {
     const code = line.slice(0, 2);
+    const x = code[0], y = code[1];
+    summary.total++;
+    if (code === '??') summary.untracked++;
+    else {
+      if (x && x !== ' ') summary.staged++;
+      if (y && y !== ' ') summary.unstaged++;
+      if (x === 'U' || y === 'U' || code === 'AA' || code === 'DD') summary.conflicted++;
+    }
     let rest = line.slice(3);
     if (rest.includes(' -> ')) rest = rest.split(' -> ')[1]; // 重命名取新名
     rest = rest.replace(/^"|"$/g, '');
     return { code, status: code.trim(), path: path.join(root, rest), name: path.basename(rest) };
   });
-  return { isRepo: true, root, files };
+  return { isRepo: true, root, branch, upstream, ahead, behind, dirty: summary.total > 0, summary, files };
 }
 // 单文件 HEAD 版本 vs 工作区当前内容，供 Monaco DiffEditor 并排渲染
 async function gitFileDiff(p) {
