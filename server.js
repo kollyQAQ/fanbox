@@ -146,30 +146,45 @@ async function listDir(dirPath) {
     if (d.name === '.DS_Store') continue;
     const full = path.join(dir, d.name);
     let isDir = d.isDirectory();
-    let size = 0, mtime = 0;
-    // 处理符号链接
-    if (d.isSymbolicLink()) {
-      try {
-        const st = await fsp.stat(full);
-        isDir = st.isDirectory();
-      } catch { continue; }
-    }
-    let btime = 0;
+    const isSymlink = d.isSymbolicLink();
+    let size = 0, mtime = 0, btime = 0;
+    let linkTarget = null, linkTargetRaw = null, linkBroken = false;
     try {
       const st = await fsp.lstat(full);
       size = st.size;
       mtime = st.mtimeMs;
       btime = st.birthtimeMs || 0;
     } catch { /* ignore */ }
+    if (isSymlink) {
+      try {
+        linkTargetRaw = await fsp.readlink(full);
+        const fallbackTarget = path.resolve(dir, linkTargetRaw);
+        linkTarget = await fsp.realpath(full).catch(() => fallbackTarget);
+        const st = await fsp.stat(full);
+        isDir = st.isDirectory();
+        size = st.size;
+        mtime = st.mtimeMs;
+        btime = st.birthtimeMs || 0;
+      } catch {
+        linkBroken = true;
+        isDir = false;
+      }
+    }
+    const kindName = (isSymlink && linkTarget && !isDir) ? path.basename(linkTarget) : d.name;
     entries.push({
       name: d.name,
       path: full,
       isDir,
-      kind: kindOf(d.name, isDir),
+      kind: linkBroken ? 'other' : kindOf(kindName, isDir),
       hidden: d.name.startsWith('.'),
       size,
       mtime,
       btime,
+      isSymlink,
+      linkTarget,
+      linkTargetRaw,
+      linkTargetIsDir: isSymlink && !linkBroken ? isDir : false,
+      linkBroken,
     });
   }
   // 文件夹在前，按名称排序

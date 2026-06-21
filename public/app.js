@@ -234,6 +234,21 @@ function dirOf(p) { const i = p.lastIndexOf(state.sep); return i > 0 ? p.slice(0
 function baseOf(p) { const parts = p.split(state.sep).filter(Boolean); return parts[parts.length - 1] || p; }
 function tilde(p) { return state.home && p.startsWith(state.home) ? '~' + p.slice(state.home.length) : p; }
 function isFav(path) { return state.favorites.some((f) => f.path === path); }
+function symlinkTargetPath(e) { return e && e.isSymlink && e.linkTarget && !e.linkBroken ? e.linkTarget : null; }
+function symlinkTitle(e) {
+  if (!e || !e.isSymlink) return '';
+  if (e.linkBroken) return `软链接已断开\n${tilde(e.path)}`;
+  return `软链接\n${tilde(e.path)}\n→ ${tilde(e.linkTarget)}`;
+}
+function symlinkBadge(e) {
+  if (!e || !e.isSymlink) return '';
+  return `<span class="link-badge${e.linkBroken ? ' broken' : ''}" title="${escapeHtml(symlinkTitle(e))}">${ic('link', 'currentColor', 10)}</span>`;
+}
+function symlinkHint(e) {
+  if (!e || !e.isSymlink) return '';
+  const label = e.linkBroken ? '断链' : `→ ${tilde(e.linkTarget)}`;
+  return `<span class="link-hint" title="${escapeHtml(symlinkTitle(e))}">${escapeHtml(label)}</span>`;
+}
 function toast(msg, isErr) {
   const t = $('#toast');
   t.textContent = msg;
@@ -602,25 +617,27 @@ function projBadge(e) {
 function gridItem(e, i) {
   const el = document.createElement('div');
   const chg = state.changed && state.changed.get(e.name);
-  el.className = 'item' + (e.isDir ? ' is-dir' : ' is-file') + (e.hidden ? ' hidden-file' : '') + (state.selected === e.path ? ' selected' : '') + (chg ? ' changed' : '');
+  el.className = 'item' + (e.isDir ? ' is-dir' : ' is-file') + (e.hidden ? ' hidden-file' : '') + (e.isSymlink ? ' is-link' : '') + (e.linkBroken ? ' is-broken-link' : '') + (state.selected === e.path ? ' selected' : '') + (chg ? ' changed' : '');
   el.dataset.idx = i;
   el.dataset.path = e.path;
-  if (chg) { el.dataset.changed = chg.count > 1 ? '改·' + chg.count : '改'; el.style.setProperty('--heat', Math.min(1, 0.4 + chg.count * 0.12).toFixed(2)); if (chg.files.size) el.title = '刚变更：\n' + [...chg.files].join('\n'); }
-  el.innerHTML = `<div class="icon" style="--tint:${iconColorFor(e)}">${thumbHtml(e)}${projBadge(e)}</div><div class="fname">${escapeHtml(e.name)}</div>${favBtn(e)}`;
+  if (e.isSymlink) el.title = symlinkTitle(e);
+  if (chg) { el.dataset.changed = chg.count > 1 ? '改·' + chg.count : '改'; el.style.setProperty('--heat', Math.min(1, 0.4 + chg.count * 0.12).toFixed(2)); if (chg.files.size) el.title = [symlinkTitle(e), '刚变更：\n' + [...chg.files].join('\n')].filter(Boolean).join('\n\n'); }
+  el.innerHTML = `<div class="icon" style="--tint:${iconColorFor(e)}">${thumbHtml(e)}${projBadge(e)}${symlinkBadge(e)}</div><div class="fname">${escapeHtml(e.name)}</div>${favBtn(e)}`;
   bindItem(el, e);
   return el;
 }
 function listRow(e, i) {
   const el = document.createElement('div');
   const chgR = state.changed && state.changed.get(e.name);
-  el.className = 'row' + (e.isDir ? ' is-dir' : ' is-file') + (e.hidden ? ' hidden-file' : '') + (state.selected === e.path ? ' selected' : '') + (chgR ? ' changed' : '');
+  el.className = 'row' + (e.isDir ? ' is-dir' : ' is-file') + (e.hidden ? ' hidden-file' : '') + (e.isSymlink ? ' is-link' : '') + (e.linkBroken ? ' is-broken-link' : '') + (state.selected === e.path ? ' selected' : '') + (chgR ? ' changed' : '');
   el.dataset.idx = i;
   el.dataset.path = e.path;
-  if (chgR) { el.dataset.changed = chgR.count > 1 ? '改·' + chgR.count : '改'; el.style.setProperty('--heat', Math.min(1, 0.4 + chgR.count * 0.12).toFixed(2)); if (chgR.files.size) el.title = '刚变更：\n' + [...chgR.files].join('\n'); }
+  if (e.isSymlink) el.title = symlinkTitle(e);
+  if (chgR) { el.dataset.changed = chgR.count > 1 ? '改·' + chgR.count : '改'; el.style.setProperty('--heat', Math.min(1, 0.4 + chgR.count * 0.12).toFixed(2)); if (chgR.files.size) el.title = [symlinkTitle(e), '刚变更：\n' + [...chgR.files].join('\n')].filter(Boolean).join('\n\n'); }
   // 最近修改是跨目录列表，名称后缀显示来源目录，方便区分同名文件
   const dirHint = state.recentMode ? ` <span class="row-dir">· ${escapeHtml(tilde(e.dir || dirOf(e.path)))}</span>` : '';
   el.innerHTML = `<div class="icon">${(e.kind === 'image' || e.kind === 'video') ? `<img class="thumb-sm" loading="lazy" decoding="async" src="/api/thumb?path=${encodeURIComponent(e.path)}&w=96&v=${e.mtime || 0}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'svg-icon',innerHTML:this.dataset.fb||''}))" data-fb='${escapeHtml(iconSvg(e, 18))}'>` : `<span class="svg-icon">${iconSvg(e, 18)}</span>`}</div>
-    <div class="fname">${escapeHtml(e.name)}${projBadge(e)}${dirHint}</div>
+    <div class="fname">${escapeHtml(e.name)}${symlinkBadge(e)}${symlinkHint(e)}${projBadge(e)}${dirHint}</div>
     <div class="meta">${fmtTime(e.mtime)}</div>
     <div class="meta">${e.isDir ? '' : fmtSize(e.size)}</div>
     ${favBtn(e)}`;
@@ -704,12 +721,14 @@ function applySelection(path) {
 }
 function onItemClick(e) {
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停'); // 目录分支由 navigate 内统一处理，这里管点文件
+  if (e.isSymlink) { openSymlinkTarget(e, 'preview'); return; }
   if (e.isDir) { state.selected = e.path; navigate(e.path); return; }
   applySelection(e.path);
   openPreview(e);
   recordRecent(e.path);
 }
 function onItemOpen(e) {
+  if (e.isSymlink) { openSymlinkTarget(e, 'open'); return; }
   if (e.isDir) return navigate(e.path);
   // 文本/代码、图片、视频双击 =「正经看这文件」→ 全屏预览；pdf/压缩包/二进制仍交系统默认 App 打开。
   // 单击已经预览过同一文件，这里只负责放大，避免重复加载编辑器。
@@ -738,9 +757,60 @@ function cursorEnter(editor) {
   const e = state.visible[state.cursor];
   if (!e) return;
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停');
+  if (e.isSymlink) { openSymlinkTarget(e, editor ? 'editor' : 'preview'); return; }
   if (editor && !e.isDir) { openWith(e.path, 'editor'); return; }
   if (e.isDir) { state.selected = e.path; navigate(e.path); }
   else { applySelection(e.path); openPreview(e); recordRecent(e.path); }
+}
+function resolvedSymlinkEntry(e) {
+  const target = symlinkTargetPath(e);
+  if (!target) return null;
+  const isDir = !!e.linkTargetIsDir;
+  const name = baseOf(target);
+  return {
+    ...e,
+    path: target,
+    name,
+    isDir,
+    kind: isDir ? 'dir' : (e.kind || kindFromName(target)),
+    hidden: name.startsWith('.'),
+    isSymlink: false,
+    linkSource: e.path,
+  };
+}
+async function openSymlinkTarget(e, mode = 'preview') {
+  const target = resolvedSymlinkEntry(e);
+  applySelection(e.path);
+  if (!target) {
+    toast(e.linkBroken ? '链接目标不存在' : '读不到链接目标', true);
+    return;
+  }
+  if (target.isDir) {
+    state.selected = target.path;
+    await navigate(target.path);
+    return;
+  }
+  const parent = dirOf(target.path);
+  if (state.cwd !== parent) {
+    await navigate(parent);
+    if (state.cwd !== parent) return;
+  }
+  const real = state.entries.find((x) => x.path === target.path) || target;
+  applySelection(real.path);
+  if (mode === 'editor') {
+    openWith(real.path, 'editor');
+    recordRecent(real.path);
+    return;
+  }
+  const k = real.kind || kindFromName(real.path);
+  if (mode === 'open' && !['text', 'image', 'video'].includes(k)) {
+    openWith(real.path, 'default');
+    recordRecent(real.path);
+    return;
+  }
+  await openPreview(real);
+  recordRecent(real.path);
+  if (mode === 'open') setPreviewMax(true);
 }
 
 // ---------- 预览 ----------
@@ -1978,17 +2048,20 @@ function showContextMenu(ev, e) {
   ev.preventDefault();
   closeContextMenu();
   const items = [];
-  if (e.isDir) items.push({ label: '打开', fn: () => navigate(e.path) });
-  else items.push({ label: '预览', fn: () => { state.selected = e.path; openPreview(e); renderFiles(); } });
-  if (e.isDir) items.push({ label: 'AI 整理…', fn: () => organizeLaunch(e.path) });
-  if (e.isDir) items.push({ label: '磁盘占用透视', fn: () => diskPanel(e.path) });
-  if (e.isDir) items.push({ label: '在终端打开', fn: () => term.openInDir(e.path) });
-  else items.push({ label: '在所在目录开终端', fn: () => term.openInDir(dirOf(e.path)) });
-  if (e.kind === 'text') items.push({ label: '编辑文本', fn: () => enterEditMode(e) });
-  if (e.kind === 'image') items.push({ label: '编辑图片', fn: () => enterImageEdit(e) });
-  items.push({ label: '在编辑器打开', fn: () => openWith(e.path, 'editor') });
-  items.push({ label: '在 Finder 显示', fn: () => openWith(e.path, 'reveal') });
+  const target = resolvedSymlinkEntry(e) || e;
+  if (e.isDir) items.push({ label: '打开', fn: () => e.isSymlink ? openSymlinkTarget(e, 'preview') : navigate(e.path) });
+  else items.push({ label: '预览', fn: () => { if (e.isSymlink) openSymlinkTarget(e, 'preview'); else { state.selected = e.path; openPreview(e); renderFiles(); } } });
+  if (e.isSymlink && e.linkBroken) items.push({ label: '复制断链路径', fn: () => copyPath(e.path) });
+  if (e.isDir && !e.linkBroken) items.push({ label: 'AI 整理…', fn: () => organizeLaunch(target.path) });
+  if (e.isDir && !e.linkBroken) items.push({ label: '磁盘占用透视', fn: () => diskPanel(target.path) });
+  if (e.isDir && !e.linkBroken) items.push({ label: '在终端打开', fn: () => term.openInDir(target.path) });
+  else if (!e.linkBroken) items.push({ label: '在所在目录开终端', fn: () => term.openInDir(dirOf(target.path)) });
+  if (e.kind === 'text' && !e.linkBroken) items.push({ label: '编辑文本', fn: () => enterEditMode(target) });
+  if (e.kind === 'image' && !e.linkBroken) items.push({ label: '编辑图片', fn: () => enterImageEdit(target) });
+  if (!e.linkBroken) items.push({ label: '在编辑器打开', fn: () => openWith(target.path, 'editor') });
+  items.push({ label: '在 Finder 显示', fn: () => openWith(target.path, 'reveal') });
   items.push({ label: '复制路径', fn: () => copyPath(e.path) });
+  if (e.isSymlink && target.path !== e.path) items.push({ label: '复制真实路径', fn: () => copyPath(target.path) });
   items.push({ sep: true });
   items.push({ label: isFav(e.path) ? '取消收藏' : '收藏', fn: () => toggleFav(e) });
   items.push({ label: '重命名…', fn: () => doRename(e) });
