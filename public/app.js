@@ -185,7 +185,7 @@ window.__svgVideo = richIcon({ name: '_.mp4', kind: 'video' }, 40);
 const state = {
   cwd: null, home: null, platform: 'darwin', sep: '/',
   theme: localStorage.getItem('fb_theme') || 'warm',
-  entries: [], project: null, history: [],
+  entries: [], project: null, history: [], forwardHistory: [],
   view: localStorage.getItem('fb_view') || 'grid',
   gridSize: localStorage.getItem('fb_gridsize') || 'sm',
   sort: localStorage.getItem('fb_sort') || 'name',
@@ -265,7 +265,7 @@ const SHORTCUT_GROUPS = [
     { keys: '⌘/', desc: '打开或关闭快捷键面板' },
     { keys: '⌘K', desc: '打开或关闭命令面板' },
     { keys: 'Esc', desc: '关闭当前弹窗、预览或退出预览全屏' },
-    { keys: '⌘[', desc: '返回上一次浏览位置' },
+    { keys: '⌘[ / ⌘]', desc: '返回上一次浏览位置 / 前进到下一次浏览位置' },
     { keys: '⌘\\', desc: '折叠或展开侧栏' },
     { keys: '⌘⇧F', desc: '铺满当前焦点区域；已铺满时还原' },
     { keys: '⌘R', desc: '刷新内嵌浏览器当前页面' },
@@ -390,13 +390,21 @@ async function guardDirty() {
 const isMdName = (n) => /\.(md|markdown)$/i.test(String(n || ''));
 
 // ---------- 导航 ----------
+function pushDirHistory(stack, p) {
+  if (!p) return;
+  if (stack[stack.length - 1] !== p) stack.push(p);
+  if (stack.length > 80) stack.splice(0, stack.length - 80);
+}
 async function navigate(p, pushHistory = true) {
-  if (!await guardDirty()) return;
+  if (!await guardDirty()) return false;
   if (pushHistory && !follow.navving) restoreFileAreaIfHidden(); // 用户主动导航时，终端铺满/全铺就退出，让文件区回来
   try {
     const data = await api('/api/list?path=' + encodeURIComponent(p));
-    if (data.error) { toast('无法打开：' + data.error, true); return; }
-    if (pushHistory && state.cwd) state.history.push(state.cwd);
+    if (data.error) { toast('无法打开：' + data.error, true); return false; }
+    if (pushHistory && state.cwd && data.path !== state.cwd) {
+      pushDirHistory(state.history, state.cwd);
+      state.forwardHistory = [];
+    }
     state.cwd = data.path;
     state.git = null;
     try { window.fanboxWechat && window.fanboxWechat.setCwd(state.cwd); } catch { /* 微信 ClawBot 的 agent 工作目录跟随当前项目 */ }
@@ -414,7 +422,8 @@ async function navigate(p, pushHistory = true) {
     updateWatches();
     // 手动跳目录 = 接管浏览，文件跟随让位（跟随自己发起的导航除外）
     if (follow.on && !follow.navving) setFileFollow(false, '手动接管，文件跟随已停');
-  } catch (e) { toast('打开失败', true); }
+    return true;
+  } catch (e) { toast('打开失败', true); return false; }
 }
 // 汇总当前要监听的目录：浏览目录 + 每个终端会话的项目目录，发给主进程做增量监听
 function updateWatches() {
@@ -427,13 +436,49 @@ function updateWatches() {
 }
 // shell 单引号转义（用于把路径塞进终端 cd 命令）
 function shQuote(s) { return `'${String(s).replace(/'/g, `'\\''`)}'`; }
-function goBack() { if (state.history.length) navigate(state.history.pop(), false); }
+async function goBack() {
+  if (!state.history.length || !state.cwd) return;
+  if (!follow.navving) restoreFileAreaIfHidden();
+  const prev = state.history[state.history.length - 1];
+  const cur = state.cwd;
+  const ok = await navigate(prev, false);
+  if (ok) {
+    state.history.pop();
+    pushDirHistory(state.forwardHistory, cur);
+    renderNavButtons();
+  }
+}
+async function goForward() {
+  if (!state.forwardHistory.length || !state.cwd) return;
+  if (!follow.navving) restoreFileAreaIfHidden();
+  const next = state.forwardHistory[state.forwardHistory.length - 1];
+  const cur = state.cwd;
+  const ok = await navigate(next, false);
+  if (ok) {
+    state.forwardHistory.pop();
+    pushDirHistory(state.history, cur);
+    renderNavButtons();
+  }
+}
 function goUp() { if (state.parent && state.parent !== state.cwd) navigate(state.parent); }
 
 // ---------- 渲染 ----------
 function render() {
+  renderNavButtons();
   renderBreadcrumb();
   renderFiles();
+}
+function renderNavButtons() {
+  const back = $('#btn-nav-back');
+  const fwd = $('#btn-nav-forward');
+  if (back) {
+    back.disabled = !state.history.length;
+    back.title = state.history.length ? `后退到 ${tilde(state.history[state.history.length - 1])} (⌘[)` : '没有上一个目录';
+  }
+  if (fwd) {
+    fwd.disabled = !state.forwardHistory.length;
+    fwd.title = state.forwardHistory.length ? `前进到 ${tilde(state.forwardHistory[state.forwardHistory.length - 1])} (⌘])` : '没有下一个目录';
+  }
 }
 function renderBreadcrumb() {
   const bc = $('#breadcrumb');
@@ -2730,7 +2775,8 @@ function bindEvents() {
     tb.classList.toggle('tb-xxs', w < 790);
     tb.classList.toggle('tb-min', w < 660);
   }).observe(tb);
-  // ←/↑ 顶栏按钮已删（与面包屑功能重复、且和 macOS 红绿灯冲突）；后退/上一级保留 ⌘[ 和 Backspace 快捷键
+  $('#btn-nav-back').onclick = () => goBack();
+  $('#btn-nav-forward').onclick = () => goForward();
   $('#preview-close').onclick = closePreview;
   $('#cmdk-trigger').onclick = () => cmdk.open();
   $('#btn-recent').onclick = showRecent;
@@ -2907,6 +2953,7 @@ function bindEvents() {
     if (e.key === 'Escape' && inInput) { document.activeElement.blur(); return; }
     if (e.key === 'Escape' && !$('#preview').classList.contains('hidden')) { closePreview(); return; }
     if ((e.metaKey || e.ctrlKey) && e.key === '[') { e.preventDefault(); goBack(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.key === ']') { e.preventDefault(); goForward(); return; }
     if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); toggleSidebar(); return; }
     // ⌘B 打开/关闭浏览器模块（browser.js 暴露 window.fbBrowser）
     if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !e.shiftKey) { e.preventDefault(); if (window.fbBrowser) window.fbBrowser.toggle(); return; }
