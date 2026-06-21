@@ -10,12 +10,12 @@
 | ---------------------------- | ------------------------------------------------------------------------------------------- | ------ |
 | `feature/keyboard-shortcuts` | 全局快捷键：⌘/ 快捷键面板、⌘1-9 切终端 tab、⌘←→ 切前后 tab、⌘W 关终端、⌘N 新终端、⌘B 浏览器开关、⌘P 隐藏文件、⌘⇧F 焦点铺满、⌘\ 侧栏折叠、按住⌘显示 tab 序号 | —      |
 | `feature/browser`            | 内嵌浏览器模块：多站点 webview 标签视图，切换保活                                                               | —      |
-| `feature/project-memory`     | 会话真标题 + ✎ 改名 + 全局项目记忆浏览器                                                                    | —  |
+| `feature/project-memory`     | Claude/Codex 会话真标题展示 + Claude ✎ 改名 + 全局项目记忆浏览器                                              | —  |
 | `feature/terminal-tab-overflow` | 终端 tab 紧凑任务栏：active / 文件跟随 / busy / unread 优先可见，放不下的会话收进「更多」菜单                          | —      |
 | `feature/file-preview`       | 点开头隐藏文件可预览/编辑/diff + .\*rc 等无扩展名文件可编辑；文件区空白右键可操作当前目录，并在状态条显示当前 Git 分支/工作区改动情况                                                       | —      |
 | `feature/max-layout`         | ⌘⇧F 焦点铺满（已并入 keyboard-shortcuts，保留分支供 PR）                                                   | —  |
 | `chore/strip-nul-bytes`      | 终端验证缓存 key 的 NUL 分隔符改为转义                                                                    | —      |
-| `feature/ui-tweaks`          | UI 微调：移除更新提示的「去下载」按钮                                                                         | —      |
+| `feature/ui-tweaks`          | UI 微调：移除更新提示的「去下载」按钮；收藏文件夹按字母顺序展示                                                                         | —      |
 | `feature/md-lossless-relax`  | md 无损判定放宽：结构比对失败时再比纯文本，表格/列表/空白等无害重排不再误锁源码（只有真吞内容才锁）                                          | —      |
 
 ## 已删除/废弃
